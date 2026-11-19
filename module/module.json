@@ -1,0 +1,12 @@
+{
+  "id": "georgios-nemesis",
+  "title": "Georgios' Nemesis",
+  "description": "Keeps Ogeia alive between sessions: named people with memory and motives, and factions with their courts and chains of command. GM only. Needs Georgios' Map Maker and its companion.",
+  "version": "0.1.0",
+  "authors": [{ "name": "Georgios" }],
+  "compatibility": { "minimum": "13", "verified": "14" },
+  "relationships": { "requires": [{ "id": "georgios-map-maker", "type": "module" }] },
+  "esmodules": ["scripts/main.js"],
+  "styles": ["styles/nemesis.css"],
+  "languages": [{ "lang": "en", "name": "English", "path": "lang/en.json" }]
+}

@@ -1,0 +1,60 @@
+/* Georgios' Nemesis board (board-html.js), in Map Maker's dark-and-brass look. */
+.gn-board-app .window-content { padding: 0; }
+.gn-board-app .gn-pad { padding: 12px; }
+.gn-board-app .gn-hint { color: #b9b2a2; font-style: italic; }
+.gn-board-app .gn-error { color: #ff8a7a; }
+
+.gn-board { display: flex; height: 100%; min-height: 0; color: #f1e6cf; }
+.gn-side { flex: 0 0 230px; display: flex; flex-direction: column; gap: 6px; padding: 8px; background: rgba(0, 0, 0, 0.3); border-right: 1px solid #8a6d3b55; overflow-y: auto; }
+.gn-world { margin: 2px 4px 6px; font-size: 0.85em; color: #b9b2a2; text-transform: none; }
+.gn-factions { display: flex; flex-direction: column; gap: 4px; }
+.gn-faction { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; height: auto; min-height: 0; flex: 0 0 auto; padding: 6px 8px; text-align: left; line-height: 1.25; background: rgba(20, 16, 12, 0.6); color: #f1e6cf; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.gn-faction:hover { border-color: #8a6d3b; }
+.gn-faction.active { border-color: #e0b866; background: rgba(60, 45, 20, 0.7); }
+.gn-faction-name { font-weight: 600; }
+.gn-faction-meta { font-size: 0.8em; color: #b9b2a2; }
+.gn-outside { margin-top: 6px; border-top: 1px dashed #8a6d3b88; }
+.gn-refresh { margin-top: auto; }
+
+.gn-pane { flex: 1 1 auto; overflow-y: auto; padding: 10px 16px 24px; }
+.gn-pane header h2 { margin: 0 0 2px; border: none; }
+.gn-meta { margin: 0 0 6px; color: #b9b2a2; }
+.gn-summary { line-height: 1.45; max-width: 70ch; }
+.gn-pane h3 { margin: 16px 0 6px; padding-bottom: 2px; border-bottom: 1px solid #8a6d3b66; }
+.gn-town { margin: 10px 0 4px; color: #e0b866; }
+
+.gn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.gn-card { display: flex; gap: 10px; padding: 8px; background: rgba(20, 16, 12, 0.55); border: 1px solid #8a6d3b66; border-radius: 6px; }
+.gn-card.gn-plotlocked { border-style: dashed; }
+.gn-portrait { flex: 0 0 72px; height: 96px; border-radius: 4px; overflow: hidden; background: #1c1712; display: flex; align-items: center; justify-content: center; }
+.gn-portrait img { width: 100%; height: 100%; object-fit: cover; border: none; }
+.gn-noart i { font-size: 28px; color: #8a6d3b; }
+.gn-card-body { flex: 1 1 auto; min-width: 0; }
+.gn-card h4 { margin: 0; font-size: 1.05em; }
+.gn-rank { margin-left: 4px; font-size: 0.75em; font-weight: normal; color: #e0b866; text-transform: uppercase; letter-spacing: 0.04em; }
+.gn-card p { margin: 2px 0; line-height: 1.35; }
+.gn-role { color: #e8d9b0; }
+.gn-line, .gn-spheres { font-size: 0.9em; color: #cfc6b2; }
+.gn-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.gn-tag { font-size: 0.78em; padding: 0 6px; border-radius: 999px; border: 1px solid #8a6d3b; }
+.gn-plot { color: #e0b866; }
+.gn-gm, .gn-state { color: #ff8a7a; border-color: #a0504a; }
+.gn-memory { margin-top: 4px; }
+.gn-memory ul, .gn-details ul, .gn-goals { margin: 2px 0 4px 16px; padding: 0; }
+.gn-memory li, .gn-details li, .gn-goals li { margin: 1px 0; line-height: 1.35; }
+.gn-when { font-size: 0.8em; color: #b9b2a2; }
+.gn-details summary { cursor: pointer; color: #e0b866; font-size: 0.9em; }
+.gn-secret { margin-top: 4px; padding: 4px 6px; background: rgba(120, 40, 30, 0.25); border-left: 3px solid #a0504a; border-radius: 2px; }
+.gn-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.gn-link { font-size: 0.85em; color: #e0b866; cursor: pointer; }
+.gn-link:hover { text-decoration: underline; }
+.gn-goals { list-style: none; margin-left: 0; }
+.gn-goal { display: inline-block; min-width: 46px; font-size: 0.78em; padding: 0 6px; border-radius: 999px; text-align: center; }
+.gn-goal.gn-want { background: #3c5a2e; }
+.gn-goal.gn-fear { background: #6a2e2a; }
+.gn-clock { font-size: 0.8em; color: #b9b2a2; }
+
+.gn-chain { list-style: none; margin: 0; padding: 0; }
+.gn-chain .gn-chain { margin-left: 22px; padding-left: 10px; border-left: 1px solid #8a6d3b66; }
+.gn-chain > li { margin: 6px 0; }
+.gn-chain .gn-card { max-width: 560px; }
