@@ -35,6 +35,11 @@ export interface PersonCard {
   gmOnly: boolean;
   scribbler: string[];
   art?: Record<string, string>;
+  /** Foundry uuids of the person's actor and GM journal, once made. */
+  actor?: string;
+  journal?: string;
+  /** Townsfolk: what they keep and where. */
+  post?: { role: string; scene?: string };
 }
 
 export interface ChainNode {
@@ -59,6 +64,8 @@ export interface FactionView {
   archmages: PersonCard[];
   chain: ChainNode[];
   people: PersonCard[];
+  /** Townsfolk Nemesis has written (the keepers of Map Maker's places), by town. */
+  townsfolk: Array<{ town: { id: number; name: string }; people: PersonCard[] }>;
   gmNotes: string[];
   scribbler: string[];
 }
@@ -85,8 +92,16 @@ export function buildBoard(store: NemesisStore, atlas: Atlas | undefined): Board
     dynamicOnly: !!p.dynamic?.only,
     wants: p.wants ?? [], fears: p.fears ?? [], facts: p.facts ?? [], memory: p.memory ?? [], feelings: p.feelings ?? [], knows: p.knows ?? [],
     relationships: p.relationships ?? [], commitments: p.commitments ?? [], gmNotes: p.gmNotes ?? [],
-    plotLocked: !!p.flags?.plotLocked, gmOnly: !!p.flags?.gmOnly, scribbler: p.links?.scribbler ?? [], art: p.art,
+    plotLocked: !!p.flags?.plotLocked, gmOnly: !!p.flags?.gmOnly, scribbler: p.links?.scribbler ?? [], art: p.art, actor: p.links?.actor, journal: p.links?.journal,
+    ...(p.post ? { post: { role: p.post.role, scene: p.post.scene } } : {}),
   });
+  const townsfolkOf = (people: NRecord[]) => {
+    const by = new Map<number, PersonCard[]>();
+    for (const p of people) by.set(p.post.town, [...(by.get(p.post.town) ?? []), card(p)]);
+    return [...by.entries()]
+      .map(([id, ps]) => ({ town: { id, name: towns.get(id) ?? `town ${id}` }, people: ps.sort((a, b) => a.name.localeCompare(b.name)) }))
+      .sort((a, b) => a.town.name.localeCompare(b.town.name));
+  };
   const townCount = new Map<string, number>();
   for (const t of store.list("towns")) if (t.owner) townCount.set(t.owner, (townCount.get(t.owner) ?? 0) + 1);
 
@@ -95,7 +110,7 @@ export function buildBoard(store: NemesisStore, atlas: Atlas | undefined): Board
     const court = new Set<string>([f.ruler, ...(f.archmages ?? [])].filter(Boolean));
     const kids = new Map<string, NRecord[]>();
     for (const p of members) if (p.superior) kids.set(p.superior, [...(kids.get(p.superior) ?? []), p]);
-    const inChain = (p: NRecord) => !court.has(p.id) && p.rank && !["villager", "unranked"].includes(p.rank);
+    const inChain = (p: NRecord) => !court.has(p.id) && !p.post && p.rank && !["villager", "unranked"].includes(p.rank);
     const seen = new Set<string>();
     const tree = (id: string): ChainNode[] =>
       (kids.get(id) ?? []).filter((p) => inChain(p) && !seen.has(p.id)).map((p) => (seen.add(p.id), { person: card(p), under: tree(p.id) })).sort((a, b) => byRank(a.person, b.person));
@@ -112,12 +127,13 @@ export function buildBoard(store: NemesisStore, atlas: Atlas | undefined): Board
       ruler: f.ruler && persons.has(f.ruler) ? card(persons.get(f.ruler)!) : undefined,
       archmages: (f.archmages ?? []).filter((id: string) => persons.has(id)).map((id: string) => card(persons.get(id)!)),
       chain,
-      people: members.filter((p) => !court.has(p.id) && !seen.has(p.id)).map(card).sort(byRank),
+      people: members.filter((p) => !court.has(p.id) && !seen.has(p.id) && !p.post).map(card).sort(byRank),
+      townsfolk: townsfolkOf(members.filter((p) => p.post && !court.has(p.id))),
       gmNotes: f.gmNotes ?? [], scribbler: f.links?.scribbler ?? [],
     };
   });
   // Factions the table has met come first, then the largest.
-  const known = (f: FactionView) => f.archmages.length + f.chain.length + f.people.length;
+  const known = (f: FactionView) => f.archmages.length + f.chain.length + f.people.length + f.townsfolk.length;
   factions.sort((a, b) => known(b) - known(a) || b.towns - a.towns || a.name.localeCompare(b.name));
   const outside = [...persons.values()].filter((p) => !p.faction || !store.get("factions", p.faction)).map(card).sort(byRank);
   return { world: { id: store.world, title: store.meta.title ?? atlas?.title, source: atlas?.source, mapMaker: atlas?.mapMaker }, factions, outside };

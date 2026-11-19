@@ -39,9 +39,21 @@ export interface WorldProse {
   realms?: Record<string, { today?: string }>;
 }
 
-/** lore.json: the GM's lore, with rulers pinned by state id. */
+/**
+ * lore.json: the GM's lore, as Map Maker keeps it (what the people of the world can know; no GM
+ * secrets). Nemesis keeps its own copy beside its records and reads the parts below.
+ */
 export interface WorldLore {
+  era?: { short: string; name: string; from: string };
+  lord?: string;
+  world?: string[];
+  peoples?: string;
+  humans?: string;
+  cultures?: Record<string, { way: string; folk: string[]; note?: string }>;
+  faiths?: Record<string, string>;
+  /** Keyed by state id. */
   rulers?: Record<string, { ruler: string; archmage?: string }>;
+  invader?: { seen?: string; unknown?: string };
 }
 
 /**

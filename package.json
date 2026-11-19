@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "serve": "tsx companion/src/cli/serve.ts",
-    "import": "tsx companion/src/cli/import.ts"
+    "import": "tsx companion/src/cli/import.ts",
+    "folk": "tsx companion/src/cli/folk.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

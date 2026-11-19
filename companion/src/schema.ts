@@ -70,18 +70,60 @@ const ART: Schema = {
 const obj = (properties: Record<string, Schema>, required: string[] = []): Schema => ({ type: "object", additionalProperties: false, properties, required });
 const list = (items: Schema, maxItems = 200): Schema => ({ type: "array", items, maxItems });
 
+const ABILITY = { enum: ["str", "dex", "con", "int", "wis", "cha"] };
+const DICE: Schema = obj({ number: { type: "integer", minimum: 0, maximum: 200 }, die: { enum: [4, 6, 8, 10, 12, 20] }, bonus: { type: "integer", minimum: -20, maximum: 500 } }, ["number", "die", "bonus"]);
+const SCORE: Schema = { type: "integer", minimum: 1, maximum: 40 };
+
+/** The static kit: a stat block whose numbers come from the balance table. */
+const STATIC: Schema = obj({
+  hp: { type: "integer", minimum: 1 },
+  ac: { type: "integer", minimum: 5, maximum: 40 },
+  cr: { type: "integer", minimum: 0, maximum: 30 },
+  size: { enum: ["tiny", "sm", "med", "lg", "huge", "grg"] },
+  speed: obj({ walk: { type: "integer", minimum: 0 }, fly: { type: "integer", minimum: 0 }, swim: { type: "integer", minimum: 0 }, climb: { type: "integer", minimum: 0 } }, ["walk"]),
+  scores: obj({ str: SCORE, dex: SCORE, con: SCORE, int: SCORE, wis: SCORE, cha: SCORE }, ["str", "dex", "con", "int", "wis", "cha"]),
+  saves: { type: "array", items: ABILITY, maxItems: 6 },
+  attacksPerRound: { type: "integer", minimum: 0, maximum: 8 },
+  attacks: list(obj({ name: TEXT, kind: { enum: ["melee", "ranged"] }, damageType: TEXT, toHit: { type: "integer", minimum: -5, maximum: 40 }, dice: DICE, text: TEXT }, ["name", "kind", "damageType", "toHit", "dice"]), 6),
+  powers: list(obj({
+    name: TEXT, save: ABILITY, dc: { type: "integer", minimum: 5, maximum: 40 }, effect: TEXT, damageType: TEXT, dice: DICE,
+    area: { enum: ["one", "line", "cone", "burst"] }, recharge: { type: "integer", minimum: 2, maximum: 6 }, text: TEXT,
+  }, ["name", "save", "dc", "effect", "damageType", "area"]), 6),
+  resistances: TEXTS,
+  legendary: obj({ actions: { type: "integer", minimum: 0, maximum: 5 }, resistances: { type: "integer", minimum: 0, maximum: 5 } }, ["actions", "resistances"]),
+  trickDc: { type: "integer", minimum: 5, maximum: 40 },
+  notes: TEXT,
+});
+
+/** The GM's notes for running a person on the fly (written with the card; the GM may edit them). */
+const NOTES: Schema = obj({
+  paradigm: obj({ summary: TEXT, tools: TEXT, signs: TEXT, limits: TEXT }),
+  spheres: list(obj({ sphere: { enum: SPHERES }, uses: TEXTS }, ["sphere", "uses"]), 9),
+  mind: obj({ priorities: TEXT, decisions: TEXT, knows: TEXT, underlings: TEXT }),
+  tactics: obj({ opening: TEXT, pressure: TEXT, hurt: TEXT, retreat: TEXT, combo: TEXT, vsMages: TEXT, terrain: TEXT, building: TEXT }),
+  roleplay: obj({ voice: TEXT, mannerisms: TEXT, lines: TEXTS, threats: TEXT, bribes: TEXT, flattery: TEXT, mercy: TEXT, secret: TEXT }),
+});
+
 export const PERSON: Schema = obj({
   id: ID, name: TEXT, aliases: TEXTS, species: TEXT, look: { ...TEXT, description: "what the person looks like" },
   rank: { enum: RANKS }, role: TEXT,
   faction: ID, home: TOWN, superior: ID,
-  static: obj({ hp: { type: "integer", minimum: 1 }, abilities: TEXTS, notes: TEXT }),
+  /** Townsfolk: the place and role they keep on Map Maker's maps, so a rebuilt scene finds them again. */
+  post: obj({ town: TOWN, place: { type: "string", minLength: 1, maxLength: 300 }, role: TEXT, n: { type: "integer", minimum: 0, maximum: 50 }, scene: TEXT }, ["town", "place", "role"]),
+  static: STATIC,
   dynamic: obj({
     spheres: { type: "object", propertyNames: { enum: SPHERES }, additionalProperties: { type: "integer", minimum: 1, maximum: 5 } },
     only: { type: "boolean", description: "uses only dynamic magic: no static spells or innate powers" },
     worldview: TEXT,
-    tricks: list(obj({ name: TEXT, sphere: { enum: SPHERES }, size: { enum: SIZES }, text: TEXT }, ["name", "sphere", "size", "text"]), 4),
+    tricks: list(obj({
+      name: TEXT, sphere: { enum: SPHERES }, size: { enum: SIZES }, text: TEXT,
+      vsMages: { ...TEXT, description: "how it reaches a mage through the world; direct magic does nothing to a mage" },
+    }, ["name", "sphere", "size", "text", "vsMages"]), 4),
   }),
   wants: TEXTS, fears: TEXTS, beliefs: TEXTS, facts: { ...TEXTS, description: "what the table has established" },
+  personality: TEXT, combatStyle: TEXT, strength: TEXT, weakness: TEXT, notes: NOTES,
+  /** Where a generated person came from: the rolled seeds and the GM's note. */
+  origin: obj({ seeds: { type: "object", additionalProperties: { type: "string", maxLength: 400 } }, note: TEXT, model: { type: "string", maxLength: 80 } }),
   feelings: list(obj({ toward: TEXT, feeling: TEXT }, ["toward", "feeling"])),
   relationships: list(obj({ kind: { enum: ["superior", "subordinate", "spouse", "family", "lover", "rival", "ally", "debt", "other"] }, with: TEXT, note: TEXT }, ["kind", "with"])),
   commitments: list(obj({ kind: { enum: ["order", "deal", "promise", "request", "mind", "brand"] }, text: TEXT, from: TEXT, tier: { enum: ["senses", "heart", "will"] }, expires: TEXT }, ["kind", "text"])),

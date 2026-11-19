@@ -2,8 +2,8 @@ node_modules/
 *.log
 *.tmp
 
-# Campaign data (records and seeds) lives in Georgios' Map Maker's git-ignored data folder,
-# never here: seeds carry the GM's secrets.
+# Campaign data (records, seeds, roll tables, the folk book, portraits) stays out of git:
+# seeds carry the GM's secrets.
 data/
 
 # Local working notes

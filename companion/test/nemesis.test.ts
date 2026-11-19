@@ -43,7 +43,7 @@ const seed: Seed = {
   id: "session-1",
   persons: [
     { id: "king-dimitrios-vi", wants: ["A greater kingdom"] },
-    { id: "grand-magus", name: "Grand Magus", rank: "archmage", faction: "march", superior: "king-dimitrios-vi", static: { hp: 100_000 }, dynamic: { spheres: { Time: 5, Forces: 5, Correspondence: 4 }, only: true }, state: "alive" },
+    { id: "grand-magus", name: "Grand Magus", rank: "archmage", faction: "march", superior: "king-dimitrios-vi", static: { hp: 20_000 }, dynamic: { spheres: { Time: 5, Forces: 5, Correspondence: 4 }, only: true }, state: "alive" },
     { id: "alice", name: "Alice", species: "scaled folk", rank: "villager", faction: "march", home: 119, relationships: [{ kind: "spouse", with: "drogo" }], memory: [{ when: "session 1", text: "Found the party at the docks" }], state: "alive" },
     { id: "dracula", name: "Dracula", rank: "unranked", flags: { plotLocked: true }, gmNotes: ["secret"], state: "alive" },
   ],
@@ -75,15 +75,15 @@ describe("schema", () => {
 });
 
 describe("world rules", () => {
-  it("keeps HP inside the GM's ladder (villager 400, the rest ten times the first proposal)", () => {
+  it("keeps HP inside the GM's ladder (villager 400, a huge boss about 30 rounds of today's damage)", () => {
     expect(HP_BANDS.villager).toEqual([300, 600]);
-    expect(HP_BANDS.archmage).toEqual([60_000, 100_000]);
+    expect(HP_BANDS.archmage).toEqual([15_000, 20_000]);
     expect(personRules({ rank: "villager", static: { hp: 400 } })).toEqual([]);
     expect(personRules({ rank: "villager", static: { hp: 45 } })[0]).toMatch(/a villager has 300 to 600 HP, not 45/);
     expect(personRules({ rank: "unranked", static: { hp: 9_999_999 } })).toEqual([]);
   });
   it("gives a dynamic-only mage no static powers and caps tricks by Sphere rating", () => {
-    expect(personRules({ dynamic: { only: true }, static: { abilities: ["Fireball"] } })[0]).toMatch(/only dynamic magic/);
+    expect(personRules({ dynamic: { only: true }, static: { powers: [{ name: "Fireball" }] } })[0]).toMatch(/only dynamic magic/);
     expect(sizeCap(2)).toBe("Personal");
     expect(sizeCap(5)).toBe("Cataclysm");
     const mage = { dynamic: { spheres: { Time: 5, Correspondence: 4 }, tricks: [{ name: "Age the walls", sphere: "Time", size: "Cataclysm" }, { name: "Be everywhere", sphere: "Correspondence", size: "Cataclysm" }, { name: "Burn", sphere: "Forces", size: "Area" }] } };
@@ -150,12 +150,12 @@ describe("board", () => {
   it("shows March with its king and archmage, its people, and the plot characters outside", async () => {
     const s = await freshStore();
     await applySeed(s, seed);
-    await s.put("persons", { id: "captain-vorn", name: "Captain Vorn", rank: "captain", faction: "march", superior: "grand-magus", static: { hp: 12_000 }, state: "alive" });
+    await s.put("persons", { id: "captain-vorn", name: "Captain Vorn", rank: "captain", faction: "march", superior: "grand-magus", static: { hp: 5_000 }, state: "alive" });
     const b = buildBoard(s, atlasOf(world(), { source: "map-maker", mapMakerWorld: "testland" }));
     const march = b.factions[0]!;
     expect(march.name).toBe("Kingdom of March");
     expect(march.ruler?.name).toBe("King Dimitrios VI");
-    expect(march.archmages.map((m) => [m.name, m.hp, m.dynamicOnly, m.spheres.map((x) => `${x.sphere} ${x.rating}`)])).toEqual([["Grand Magus", 100_000, true, ["Forces 5", "Time 5", "Correspondence 4"]]]);
+    expect(march.archmages.map((m) => [m.name, m.hp, m.dynamicOnly, m.spheres.map((x) => `${x.sphere} ${x.rating}`)])).toEqual([["Grand Magus", 20_000, true, ["Forces 5", "Time 5", "Correspondence 4"]]]);
     expect(march.archmages[0]!.superior).toEqual({ id: "king-dimitrios-vi", name: "King Dimitrios VI" });
     expect(march.chain.map((n) => n.person.name)).toEqual(["Captain Vorn"]);
     expect(march.people.map((p) => [p.name, p.home?.name, p.memory.length])).toEqual([["Alice", "Narkoc", 1]]);
@@ -193,7 +193,7 @@ describe("Foundry board HTML", () => {
     expect(pane).toMatch(/King Dimitrios VI <span class="gn-rank">Rank\.monarch<\/span>/);
     expect(pane).toMatch(/Grand Magus <span class="gn-rank">Rank\.archmage<\/span>/);
     expect(pane).toContain("Forces 5 · Time 5 · Correspondence 4 · <em>DynamicOnly</em>");
-    expect(pane).toContain("Hp(100,000)");
+    expect(pane).toContain("Hp(20,000)");
     expect(pane).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(pane).not.toContain("<script>");
     expect(pane.match(/data-uuid="JournalEntry\.abc"/g)).toHaveLength(1);
@@ -209,7 +209,7 @@ describe("Foundry board HTML", () => {
     const lang = JSON.parse(await readFile(new URL("lang/en.json", dir), "utf8")).GN;
     const has = (path: string) => path.split(".").reduce((o: any, k) => o?.[k], lang) !== undefined;
     const used = new Set<string>();
-    for (const f of ["scripts/main.js", "scripts/board-html.js", "scripts/launcher.js"]) {
+    for (const f of ["scripts/main.js", "scripts/board-html.js", "scripts/launcher.js", "scripts/people.js"]) {
       const src = await readFile(new URL(f, dir), "utf8");
       for (const m of src.matchAll(/\bt\("([A-Za-z.]+)"/g)) used.add(m[1]!);
       for (const m of src.matchAll(/\bL\("([A-Za-z]+)"/g)) used.add(`Launcher.${m[1]}`);

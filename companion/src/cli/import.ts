@@ -8,7 +8,7 @@
  * and towns as the map shows them, and --lore may add the GM's rulers.
  *
  * Writes <data>/worlds/<id>/ (data: NEMESIS_DATA, default <repo>/data). Running it again adds only
- * what is missing and refreshes atlas.json. Seeds (--seed files and every <data>/worlds/<id>/seeds/*.json)
+ * what is missing and refreshes atlas.json and lore.json (a copy of the lore it read). Seeds (--seed files and every <data>/worlds/<id>/seeds/*.json)
  * apply once each, so the GM's later edits survive.
  */
 
@@ -64,6 +64,8 @@ const store = await NemesisStore.open(dir, values.world);
 const added = await store.addMissing(worldRecords({ aged: world, cultures, prose, lore }));
 const atlas = atlasOf(world, { source: from === "mapmaker" ? "map-maker" : "azgaar", title: title ?? store.meta.title, mapMakerWorld: from === "mapmaker" ? values.world : undefined });
 await writeFile(join(dir, "atlas.json"), JSON.stringify(atlas, null, 1));
+// Nemesis keeps its own copy of the lore, so the generator never reads another module's folder.
+if (lore) await writeFile(join(dir, "lore.json"), JSON.stringify(lore, null, 1));
 await store.saveMeta({ title: atlas.title ?? store.meta.title, importedAt: new Date().toISOString() });
 console.log(`added: ${Object.entries(added).map(([k, n]) => `${n} ${k}`).join(", ") || "nothing new"}`);
 

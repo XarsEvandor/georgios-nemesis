@@ -15,7 +15,7 @@ const list = (items, cls = "") => (items?.length ? `<ul class="${cls}">${items.m
 /** The faction list on the left, with the people outside every faction last. */
 export function navHtml(board, selected, t) {
   const rows = board.factions.map((f) => {
-    const met = f.archmages.length + f.chain.length + f.people.length;
+    const met = f.archmages.length + f.chain.length + f.people.length + townsfolkCount(f);
     return `<button type="button" class="gn-faction ${f.id === selected ? "active" : ""}" data-faction="${esc(f.id)}">
       <span class="gn-faction-name">${esc(f.name)}</span>
       <span class="gn-faction-meta">${esc(t("Towns", { n: f.towns }))}${met ? ` · ${esc(t("Known", { n: met + (f.ruler ? 1 : 0) }))}` : ""}</span>
@@ -43,15 +43,26 @@ function placeHtml(key, ctx, label) {
   return j ? `<a class="gn-link gn-place" data-uuid="${esc(j.uuid)}" data-tooltip="${esc(ctx.t("OpenMapMaker"))}"><i class="fa-solid fa-map-location-dot"></i> ${esc(label ?? j.name)}</a>` : "";
 }
 
-function portraitHtml(p) {
-  const src = p.art?.picked ? p.art[p.art.picked] : p.art?.final ?? p.art?.layout;
-  if (src) return `<div class="gn-portrait"><img src="${esc(src)}" alt="${esc(p.name)}"></div>`;
+/** The portrait the GM picked (or the first there is). */
+export function pickedArt(art) {
+  if (!art) return undefined;
+  if (art.picked && art[art.picked]) return art[art.picked];
+  return art.final ?? art.layout ?? art.own;
+}
+
+function portraitHtml(p, ctx) {
+  const src = pickedArt(p.art);
+  const both = p.art?.final && p.art?.layout;
+  const pick = (which) => `<button type="button" class="gn-pick ${(p.art.picked ?? "final") === which ? "active" : ""}" data-pick="${which}" data-person="${esc(p.id)}" data-tooltip="${esc(ctx.t(`Pick.${which}`))}"><img src="${esc(p.art[which])}" alt=""></button>`;
+  if (src) return `<div class="gn-portrait-wrap"><div class="gn-portrait"><img src="${esc(src)}" alt="${esc(p.name)}"></div>${both ? `<div class="gn-picks">${pick("final")}${pick("layout")}</div>` : ""}</div>`;
+  if (ctx.painting?.has(p.id)) return `<div class="gn-portrait gn-noart gn-painting" data-tooltip="${esc(ctx.t("Painting"))}"><i class="fa-solid fa-palette fa-beat-fade"></i></div>`;
   const icon = { monarch: "fa-crown", archmage: "fa-hat-wizard", general: "fa-chess-knight", captain: "fa-shield-halved", veteran: "fa-shield", soldier: "fa-person-rifle", villager: "fa-user", unranked: "fa-eye" }[p.rank] ?? "fa-user";
   return `<div class="gn-portrait gn-noart"><i class="fa-solid ${icon}"></i></div>`;
 }
 
 /** One person: who they are, their magic, and what they remember of the party. */
-export function cardHtml(p, { resolve, t }) {
+export function cardHtml(p, ctx) {
+  const { resolve, t } = ctx;
   const line = [p.species, p.home ? t("From", { town: p.home.name }) : "", p.hp ? t("Hp", { hp: num(p.hp) }) : ""].filter(Boolean).map(esc).join(" · ");
   const spheres = p.spheres.length ? `<p class="gn-spheres">${p.spheres.map((s) => `${esc(s.sphere)} ${s.rating}`).join(" · ")}${p.dynamicOnly ? ` · <em>${esc(t("DynamicOnly"))}</em>` : ""}</p>` : "";
   const tags = [
@@ -73,8 +84,13 @@ export function cardHtml(p, { resolve, t }) {
     p.relationships.length ? `<p><strong>${esc(t("Relationships"))}</strong></p>${list(p.relationships.map((r) => `<em>${esc(r.kind)}</em> ${esc(r.with)}${r.note ? `: ${esc(r.note)}` : ""}`))}` : "",
     p.gmNotes.length ? `<div class="gn-secret"><p><strong><i class="fa-solid fa-lock"></i> ${esc(t("GmNotes"))}</strong></p>${list(p.gmNotes.map(esc))}</div>` : "",
   ].join("");
+  const own = [
+    p.actor ? `<a class="gn-link" data-uuid="${esc(p.actor)}" data-tooltip="${esc(t("OpenActor"))}"><i class="fa-solid fa-user-shield"></i> ${esc(t("Actor"))}</a>` : "",
+    p.journal ? `<a class="gn-link" data-uuid="${esc(p.journal)}" data-tooltip="${esc(t("OpenJournal"))}"><i class="fa-solid fa-book"></i> ${esc(t("Journal"))}</a>` : "",
+    ctx.canPaint && p.actor && !ctx.painting?.has(p.id) ? `<a class="gn-link" data-paint="${esc(p.id)}" data-tooltip="${esc(t("PaintHint"))}"><i class="fa-solid fa-palette"></i> ${esc(t(p.art?.final || p.art?.layout ? "Repaint" : "Paint"))}</a>` : "",
+  ].join("");
   return `<article class="gn-card ${p.plotLocked ? "gn-plotlocked" : ""}" data-person="${esc(p.id)}">
-    ${portraitHtml(p)}
+    ${portraitHtml(p, ctx)}
     <div class="gn-card-body">
       <h4>${esc(p.name)} ${p.rank ? `<span class="gn-rank">${esc(t(`Rank.${p.rank}`))}</span>` : ""}</h4>
       ${p.role ? `<p class="gn-role">${esc(p.role)}</p>` : ""}
@@ -83,7 +99,7 @@ export function cardHtml(p, { resolve, t }) {
       ${tags ? `<p class="gn-tags">${tags}</p>` : ""}
       <div class="gn-memory"><p><strong>${esc(t("Memory"))}</strong></p>${memory}</div>
       ${details ? `<details class="gn-details"><summary>${esc(t("Details"))}</summary>${details}</details>` : ""}
-      <p class="gn-links">${scribblerHtml(p.scribbler, resolve, t)}</p>
+      <p class="gn-links">${own}${scribblerHtml(p.scribbler, resolve, t)}</p>
     </div>
   </article>`;
 }
@@ -122,6 +138,7 @@ export function paneHtml(board, selected, ctx) {
   const goals = f.goals.length ? list(f.goals.map((g) => `<span class="gn-goal gn-${esc(g.kind)}">${esc(t(g.kind === "fear" ? "Fear" : "Want"))}</span> ${esc(g.text)}${g.clock ? ` <span class="gn-clock">${g.clock.filled}/${g.clock.size}</span>` : ""}`), "gn-goals") : "";
   return `<div class="gn-pane">
     <header>
+      ${ctx.canGenerate ? `<button type="button" class="gn-generate" data-generate="${esc(f.id)}" ${ctx.busy ? "disabled" : ""}><i class="fa-solid fa-wand-sparkles"></i> ${esc(t("Generate"))}</button>` : ""}
       <h2>${esc(f.name)}</h2>
       <p class="gn-meta">${meta}</p>
       <p class="gn-links">${scribblerHtml(f.scribbler, ctx.resolve, t)}${f.state !== undefined ? placeHtml(`realm-${f.state}`, ctx) : ""}${f.capital ? placeHtml(`town-${f.capital.id}`, ctx) : ""}</p>
@@ -134,7 +151,60 @@ export function paneHtml(board, selected, ctx) {
     <h3>${esc(t("Chain"))}</h3>
     ${f.chain.length ? chainHtml(f.chain, ctx) : `<p class="gn-hint">${esc(t("NoChain"))}</p>`}
     ${f.people.length ? `<h3>${esc(t("PeopleOfNote"))}</h3>${peopleHtml(f.people, ctx)}` : ""}
+    ${townsfolkHtml(f.townsfolk ?? [], ctx)}
   </div>`;
+}
+
+/** The townsfolk Nemesis wrote for Map Maker's places, by town. */
+function townsfolkHtml(groups, ctx) {
+  if (!groups.length) return "";
+  return `<h3>${esc(ctx.t("Townsfolk"))}</h3>${groups.map((g) => `
+    <h4 class="gn-town">${esc(g.town.name)} ${placeHtml(`town-${g.town.id}`, ctx, ctx.t("Journal"))}</h4>
+    <div class="gn-cards">${g.people.map((p) => cardHtml(p, ctx)).join("")}</div>`).join("")}`;
+}
+
+const townsfolkCount = (f) => (f.townsfolk ?? []).reduce((n, g) => n + g.people.length, 0);
+
+/** The GM journal page for a person record (the companion's record, not the board card). */
+export function journalHtml(person, t) {
+  const s = person.static ?? {};
+  const d = person.dynamic ?? {};
+  const n = person.notes ?? {};
+  const li = (xs) => (xs?.length ? `<ul>${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "");
+  const row = (k, v) => (v ? `<p><strong>${esc(k)}:</strong> ${esc(v)}</p>` : "");
+  const item = (k, v) => (v ? `<li><strong>${esc(k)}:</strong> ${esc(v)}</li>` : "");
+  const block = (title, items) => {
+    const body = items.join("");
+    return body ? `<h2>${esc(title)}</h2><ul>${body}</ul>` : "";
+  };
+  const spheres = Object.entries(d.spheres ?? {}).map(([k, v]) => `${k} ${v}`).join(", ");
+  const line = { Personal: 11, Area: 13, Environment: 15, Cataclysm: 17 };
+  const p = n.paradigm ?? {};
+  const m = n.mind ?? {};
+  const tc = n.tactics ?? {};
+  const r = n.roleplay ?? {};
+  return [
+    `<h1>${esc(person.name)}</h1>`,
+    `<p><em>${esc([person.species, person.rank ? t(`Rank.${person.rank}`) : "", person.role].filter(Boolean).join(", "))}</em></p>`,
+    row(t("Look"), person.look),
+    row(t("Personality"), person.personality),
+    person.wants?.length ? `<h2>${esc(t("Wants"))}</h2>${li(person.wants)}` : "",
+    person.fears?.length ? `<h2>${esc(t("Fears"))}</h2>${li(person.fears)}` : "",
+    person.beliefs?.length ? `<h2>${esc(t("Beliefs"))}</h2>${li(person.beliefs)}` : "",
+    block(t("Notes.Mind"), [item(t("Notes.Priorities"), m.priorities), item(t("Notes.Decisions"), m.decisions), item(t("Notes.Knows"), m.knows), item(t("Notes.Underlings"), m.underlings)]),
+    `<h2>${esc(t("InAFight"))}</h2>`,
+    row(t("CombatStyle"), person.combatStyle),
+    row(t("Strength"), person.strength),
+    row(t("Weakness"), person.weakness),
+    s.hp ? `<p>${esc(t("StatLine", { hp: Number(s.hp).toLocaleString("en"), ac: s.ac ?? "?", attacks: s.attacksPerRound ?? 0 }))}</p>` : "",
+    block(t("Notes.Tactics"), [item(t("Notes.Opening"), tc.opening), item(t("Notes.Pressure"), tc.pressure), item(t("Notes.Hurt"), tc.hurt), item(t("Notes.Retreat"), tc.retreat), item(t("Notes.Combo"), tc.combo), item(t("Notes.VsMages"), tc.vsMages), item(t("Notes.Terrain"), tc.terrain), item(t("Notes.Building"), tc.building)]),
+    spheres ? `<h2>${esc(t("DynamicMagic"))}</h2><p>${esc(spheres)}${d.worldview ? `. ${esc(d.worldview)}` : ""}</p>` : "",
+    block(t("Notes.Paradigm"), [item(t("Notes.Belief"), p.summary), item(t("Notes.Tools"), p.tools), item(t("Notes.Signs"), p.signs), item(t("Notes.Limits"), p.limits)]),
+    (d.tricks ?? []).length ? `<h3>${esc(t("Notes.Tricks"))}</h3><ul>${d.tricks.map((x) => `<li><strong>${esc(x.name)}</strong> (${esc(x.sphere)}, ${esc(x.size)}, ${line[x.size] ?? 11}+): ${esc(x.text)} <em>${esc(t("VsMages"))}</em> ${esc(x.vsMages)}</li>`).join("")}</ul>` : "",
+    (n.spheres ?? []).length ? `<h3>${esc(t("Notes.Freeform"))}</h3>${n.spheres.map((u) => `<p><strong>${esc(u.sphere)} ${d.spheres?.[u.sphere] ?? ""}</strong></p>${li(u.uses)}`).join("")}` : "",
+    block(t("Notes.Roleplay"), [item(t("Notes.Voice"), r.voice), item(t("Notes.Mannerisms"), r.mannerisms), ...(r.lines ?? []).map((x) => `<li><em>"${esc(x)}"</em></li>`), item(t("Notes.Threats"), r.threats), item(t("Notes.Bribes"), r.bribes), item(t("Notes.Flattery"), r.flattery), item(t("Notes.Mercy"), r.mercy), item(t("Notes.Secret"), r.secret)]),
+    person.gmNotes?.length ? `<h2>${esc(t("GmNotes"))}</h2>${li(person.gmNotes)}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 /** Picks the world: the Map Maker world imported into this Foundry world, else the only one. */

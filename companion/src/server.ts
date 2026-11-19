@@ -7,8 +7,11 @@
  * data/config.json (the GM's Foundry tab). Local programs send no Origin.
  */
 
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { NemesisService } from "./service";
+import { join } from "node:path";
+import { NemesisService, WORLD_ID, type ServiceDeps } from "./service";
 
 export const VERSION = "0.1.0";
 export const DEFAULT_PORT = 47120;
@@ -20,6 +23,8 @@ export interface NemesisServerOptions {
   port?: number;
   origins?: string[];
   log?: (msg: string) => void;
+  /** Claude and the portrait queue (absent in tests that only read records). */
+  deps?: ServiceDeps;
 }
 
 class HttpError extends Error {
@@ -57,7 +62,7 @@ export class NemesisServer {
   private readonly origins: Set<string>;
 
   constructor(private readonly o: NemesisServerOptions) {
-    this.service = new NemesisService(o.dataDir);
+    this.service = new NemesisService(o.dataDir, o.deps);
     this.origins = new Set(o.origins ?? DEFAULT_ORIGINS);
   }
 
@@ -94,6 +99,15 @@ export class NemesisServer {
       if (req.method === "OPTIONS") return void res.writeHead(204).end();
       const path = new URL(req.url ?? "/", "http://x").pathname;
       if (req.method === "GET" && (path === "/" || path === "/health")) return send(200, { ok: true, name: "georgios-nemesis", version: VERSION });
+      // A portrait for Foundry to upload: /art/<world>/<person>/final.png or layout.png.
+      const art = /^\/art\/([^/]+)\/([a-z0-9][a-z0-9-]{0,63})\/(final|layout)\.png$/.exec(path);
+      if (req.method === "GET" && art) {
+        if (!WORLD_ID.test(art[1]!)) throw new HttpError(400, "bad world id");
+        const file = join(this.service.worldDir(art[1]), "art", art[2]!, `${art[3]}.png`);
+        if (!existsSync(file)) throw new HttpError(404, "no such portrait");
+        res.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
+        return void res.end(await readFile(file));
+      }
       if (req.method !== "POST" || path !== "/rpc") throw new HttpError(404, "not found");
       const body = await readJson(req);
       id = body.id;

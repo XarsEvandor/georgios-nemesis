@@ -58,3 +58,18 @@
 .gn-chain .gn-chain { margin-left: 22px; padding-left: 10px; border-left: 1px solid #8a6d3b66; }
 .gn-chain > li { margin: 6px 0; }
 .gn-chain .gn-card { max-width: 560px; }
+
+/* Phase 1: the main column, Generate, the status line, portraits and the picker. */
+.gn-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.gn-main .gn-pane { flex: 1 1 auto; }
+.gn-status { margin: 0; padding: 6px 16px; background: rgba(60, 45, 20, 0.7); border-bottom: 1px solid #8a6d3b; color: #f1e6cf; }
+.gn-generate { float: right; width: auto; margin: 4px 0 0 8px; padding: 2px 12px; }
+.gn-portrait-wrap { flex: 0 0 72px; display: flex; flex-direction: column; gap: 4px; }
+.gn-portrait-wrap .gn-portrait { flex: 0 0 auto; }
+.gn-picks { display: flex; gap: 4px; }
+.gn-pick { flex: 1 1 0; height: 34px; width: auto; min-width: 0; padding: 0; border: 2px solid transparent; border-radius: 3px; background: #1c1712; overflow: hidden; cursor: pointer; }
+.gn-pick img { width: 100%; height: 100%; object-fit: cover; border: none; }
+.gn-pick.active { border-color: #e0b866; }
+.gn-painting i { color: #e0b866; }
+.gn-form { display: flex; flex-direction: column; gap: 8px; }
+.gn-form label { display: flex; flex-direction: column; gap: 2px; }
