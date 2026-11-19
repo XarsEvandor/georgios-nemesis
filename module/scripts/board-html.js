@@ -37,6 +37,12 @@ function scribblerHtml(names, resolve, t) {
   return found.filter((l) => !seen.has(l.uuid) && seen.add(l.uuid)).map((l) => `<a class="gn-link" data-uuid="${esc(l.uuid)}" data-tooltip="${esc(t("OpenScribbler"))}"><i class="fa-solid fa-feather-pointed"></i> ${esc(l.name)}</a>`).join("");
 }
 
+/** A button to a Georgios' Map Maker journal ("realm-2", "town-119"), when Map Maker made one. */
+function placeHtml(key, ctx, label) {
+  const j = ctx.place?.(key);
+  return j ? `<a class="gn-link gn-place" data-uuid="${esc(j.uuid)}" data-tooltip="${esc(ctx.t("OpenMapMaker"))}"><i class="fa-solid fa-map-location-dot"></i> ${esc(label ?? j.name)}</a>` : "";
+}
+
 function portraitHtml(p) {
   const src = p.art?.picked ? p.art[p.art.picked] : p.art?.final ?? p.art?.layout;
   if (src) return `<div class="gn-portrait"><img src="${esc(src)}" alt="${esc(p.name)}"></div>`;
@@ -91,12 +97,13 @@ function chainHtml(nodes, ctx) {
 function peopleHtml(people, ctx) {
   const groups = new Map();
   for (const p of people) {
-    const k = p.home?.name ?? "";
-    groups.set(k, [...(groups.get(k) ?? []), p]);
+    const k = p.home ? String(p.home.id) : "";
+    groups.set(k, { home: p.home, people: [...(groups.get(k)?.people ?? []), p] });
   }
-  return [...groups].sort(([a], [b]) => (a ? (b ? a.localeCompare(b) : -1) : 1)).map(([town, ps]) => `
-    ${town ? `<h4 class="gn-town">${esc(town)}</h4>` : ""}
-    <div class="gn-cards">${ps.map((p) => cardHtml(p, ctx)).join("")}</div>`).join("");
+  const name = (g) => g.home?.name ?? "";
+  return [...groups.values()].sort((a, b) => (name(a) ? (name(b) ? name(a).localeCompare(name(b)) : -1) : 1)).map((g) => `
+    ${g.home ? `<h4 class="gn-town">${esc(g.home.name)} ${placeHtml(`town-${g.home.id}`, ctx, ctx.t("Journal"))}</h4>` : ""}
+    <div class="gn-cards">${g.people.map((p) => cardHtml(p, ctx)).join("")}</div>`).join("");
 }
 
 /** The right-hand pane for one faction (or the people outside every faction). */
@@ -117,7 +124,7 @@ export function paneHtml(board, selected, ctx) {
     <header>
       <h2>${esc(f.name)}</h2>
       <p class="gn-meta">${meta}</p>
-      <p class="gn-links">${scribblerHtml(f.scribbler, ctx.resolve, t)}</p>
+      <p class="gn-links">${scribblerHtml(f.scribbler, ctx.resolve, t)}${f.state !== undefined ? placeHtml(`realm-${f.state}`, ctx) : ""}${f.capital ? placeHtml(`town-${f.capital.id}`, ctx) : ""}</p>
     </header>
     ${f.summary ? `<p class="gn-summary">${esc(f.summary)}</p>` : ""}
     ${f.gmNotes.length ? `<div class="gn-secret"><p><strong><i class="fa-solid fa-lock"></i> ${esc(t("GmNotes"))}</strong></p>${list(f.gmNotes.map(esc))}</div>` : ""}

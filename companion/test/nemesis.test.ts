@@ -1,14 +1,15 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildBoard } from "../src/board";
 import { applySeed, factionId, parseRuler, seedItems, slug, worldRecords, type Seed } from "../src/import";
-import { createPlugin } from "../src/plugin";
 import { HP_BANDS, personRules, sizeCap } from "../src/rules";
 import { PERSON, validate } from "../src/schema";
 import { NemesisError, NemesisStore } from "../src/store";
-import { azgaarCultures, type World } from "../src/world";
+import { NemesisServer } from "../src/server";
+import { atlasOf, azgaarCultures, azgaarWorld, type World } from "../src/world";
 
 
 /** A small world in Map Maker's aged shape: two realms, an invader, four towns. */
@@ -150,7 +151,7 @@ describe("board", () => {
     const s = await freshStore();
     await applySeed(s, seed);
     await s.put("persons", { id: "captain-vorn", name: "Captain Vorn", rank: "captain", faction: "march", superior: "grand-magus", static: { hp: 12_000 }, state: "alive" });
-    const b = buildBoard(s, world());
+    const b = buildBoard(s, atlasOf(world(), { source: "map-maker", mapMakerWorld: "testland" }));
     const march = b.factions[0]!;
     expect(march.name).toBe("Kingdom of March");
     expect(march.ruler?.name).toBe("King Dimitrios VI");
@@ -171,14 +172,22 @@ describe("Foundry board HTML", () => {
     const s = await freshStore();
     await applySeed(s, seed);
     await s.put("persons", { ...s.get("persons", "alice")!, facts: ["Says <script>alert(1)</script> a lot"], links: { scribbler: ["Alice", "alice"] } });
-    const b = buildBoard(s, world());
+    const b = buildBoard(s, atlasOf(world(), { source: "map-maker", mapMakerWorld: "testland" }));
     const t = (key: string, data?: Record<string, unknown>) => (data ? `${key}(${Object.values(data).join(",")})` : key);
     const resolve = (name: string) => (name.toLowerCase() === "alice" ? { uuid: "JournalEntry.abc", name: "Alice" } : undefined);
     const nav = navHtml(b, "march", t);
     expect(nav).toContain('class="gn-faction active" data-faction="march"');
     expect(nav).toContain("Known(3)"); // king, archmage, Alice
     expect(nav).toContain(`data-faction="${OUTSIDE}"`);
-    const pane = paneHtml(b, "march", { t, resolve });
+    // Alone, the board names its own towns; with Map Maker it links Map Maker's journals.
+    const alone = paneHtml(b, "march", { t, resolve });
+    expect(alone).not.toContain("gn-place");
+    expect(alone).toContain('<h4 class="gn-town">Narkoc </h4>');
+    const journals: Record<string, { uuid: string; name: string }> = { "realm-2": { uuid: "JournalEntry.r2", name: "Kingdom of March" }, "town-119": { uuid: "JournalEntry.t119", name: "Narkoc" } };
+    const pane = paneHtml(b, "march", { t, resolve, place: (key: string) => journals[key] });
+    expect(pane).toContain('data-uuid="JournalEntry.r2"');
+    expect(pane).toMatch(/<h4 class="gn-town">Narkoc <a class="gn-link gn-place" data-uuid="JournalEntry\.t119"[^>]*><i class="fa-solid fa-map-location-dot"><\/i> Journal<\/a><\/h4>/);
+    expect(pane).not.toContain("town-140"); // Zugkatil has no Map Maker journal here, so no link
     expect(pane).toContain("<h2>Kingdom of March</h2>");
     expect(pane).toContain("Capital(Zugkatil) · Towns(2) · Yotunn · Yotunn Faith");
     expect(pane).toMatch(/King Dimitrios VI <span class="gn-rank">Rank\.monarch<\/span>/);
@@ -194,39 +203,111 @@ describe("Foundry board HTML", () => {
     expect(pickWorld([{ id: "a" }, { id: "ogeia-1183" }], ["ogeia-1183"])).toEqual({ id: "ogeia-1183" });
     expect(pickWorld([{ id: "a" }], [])).toEqual({ id: "a" });
   });
+
+  it("has an English string for every key the module's scripts use", async () => {
+    const dir = new URL("../../module/", import.meta.url);
+    const lang = JSON.parse(await readFile(new URL("lang/en.json", dir), "utf8")).GN;
+    const has = (path: string) => path.split(".").reduce((o: any, k) => o?.[k], lang) !== undefined;
+    const used = new Set<string>();
+    for (const f of ["scripts/main.js", "scripts/board-html.js", "scripts/launcher.js"]) {
+      const src = await readFile(new URL(f, dir), "utf8");
+      for (const m of src.matchAll(/\bt\("([A-Za-z.]+)"/g)) used.add(m[1]!);
+      for (const m of src.matchAll(/\bL\("([A-Za-z]+)"/g)) used.add(`Launcher.${m[1]}`);
+      for (const m of src.matchAll(/"GN\.([A-Za-z.]+)"/g)) used.add(m[1]!);
+      for (const m of src.matchAll(/t\(`(Rank|State)\.\$\{/g)) used.add(m[1]!);
+    }
+    expect(used.size).toBeGreaterThan(40);
+    expect([...used].filter((k) => !has(k))).toEqual([]);
+    for (const k of ["villager", "monarch", "unranked"]) expect(has(`Rank.${k}`)).toBe(true);
+    for (const k of ["alive", "missing", "harvested"]) expect(has(`State.${k}`)).toBe(true);
+  });
 });
 
 
-describe("service and plugin", () => {
-  it("answers the nemesis.* methods, checks GM edits and tells Foundry about them", async () => {
+describe("companion server", () => {
+  async function serve() {
     const data = await mkdtemp(join(tmpdir(), "nemesis-data-"));
     const dir = join(data, "worlds", "testland");
-    await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "aged.json"), JSON.stringify(world()));
-    const s = await NemesisStore.open(join(dir, "nemesis"), "testland");
+    const s = await NemesisStore.open(dir, "testland");
     await s.addMissing(worldRecords({ aged: world(), cultures, prose, lore }));
     await applySeed(s, seed);
     await s.saveMeta({ title: "Testland, 1183 NE" });
-    const sent: unknown[] = [];
-    const plugin = createPlugin({ dataDir: data });
-    const call = (method: string, params: Record<string, unknown> = {}) => plugin.call(method, params, { broadcast: (m) => sent.push(m) });
-    expect([plugin.name, plugin.prefix]).toEqual(["georgios-nemesis", "nemesis."]);
-    expect(await call("nemesis.worlds")).toEqual([{ id: "testland", title: "Testland, 1183 NE", counts: { persons: 5, factions: 3, towns: 4, armies: 0, events: 0, rumors: 0 } }]);
-    const board: any = await call("nemesis.board", { world: "testland" });
-    expect(board.factions[0].ruler.name).toBe("King Dimitrios VI");
-    expect(board.factions[0].archmages[0].name).toBe("Grand Magus");
-    await expect(call("nemesis.put", { world: "testland", kind: "persons", record: { id: "alice", name: "Alice", rank: "villager", static: { hp: 40 }, state: "alive" } })).rejects.toThrow(/a villager has 300 to 600 HP, not 40/);
-    expect(sent).toEqual([]);
-    expect(await call("nemesis.put", { world: "testland", kind: "persons", record: { id: "alice", name: "Alice", rank: "villager", static: { hp: 400 }, faction: "march", state: "alive" } })).toEqual({ ok: true });
-    expect(sent).toEqual([{ type: "nemesis.changed", world: "testland", kind: "persons", id: "alice" }]);
-    expect(await call("nemesis.get", { world: "testland", kind: "persons", id: "alice" })).toMatchObject({ static: { hp: 400 }, source: "gm" });
-    await expect(call("nemesis.board", { world: "../etc" })).rejects.toThrow("bad world id");
-    await expect(call("nemesis.board", { world: "elsewhere" })).rejects.toThrow(/no Nemesis records for world "elsewhere"/);
-    await expect(call("nemesis.list", { world: "testland", kind: "secrets" })).rejects.toThrow(/kind must be one of/);
+    await writeFile(join(dir, "atlas.json"), JSON.stringify(atlasOf(world(), { source: "map-maker", mapMakerWorld: "testland" })));
+    const server = new NemesisServer({ dataDir: data, port: 0 });
+    await server.start();
+    const base = `http://127.0.0.1:${server.port}`;
+    const rpc = async (method: string, params: unknown = {}, headers: Record<string, string> = { origin: "http://localhost:30000" }) => {
+      const res = await fetch(`${base}/rpc`, { method: "POST", headers, body: JSON.stringify({ id: 7, method, params }) });
+      return { status: res.status, cors: res.headers.get("access-control-allow-origin"), body: (await res.json()) as any };
+    };
+    return { server, base, rpc };
+  }
+
+  it("answers the GM's Foundry tab and local programs, and no one else", async () => {
+    const { server, base, rpc } = await serve();
+    try {
+      expect(await (await fetch(`${base}/health`)).json()).toEqual({ ok: true, name: "georgios-nemesis", version: "0.1.0" });
+      const ok = await rpc("ping");
+      expect([ok.status, ok.cors, ok.body]).toEqual([200, "http://localhost:30000", { id: 7, result: { ok: true, name: "georgios-nemesis", version: "0.1.0" } }]);
+      expect((await rpc("ping", {}, {})).status).toBe(200); // a local program sends no Origin
+      const foreign = await rpc("ping", {}, { origin: "https://evil.example" });
+      expect([foreign.status, foreign.body.error.message]).toEqual([403, "origin https://evil.example is not in georgios-nemesis/data/config.json"]);
+      // A page that rebinds its own name to 127.0.0.1 still sends its own Host (fetch cannot fake one, raw HTTP can).
+      const rebind = await new Promise<number>((done, fail) => {
+        const r = request({ host: "127.0.0.1", port: server.port, path: "/rpc", method: "POST", headers: { host: "evil.example" } }, (res) => done(res.statusCode ?? 0));
+        r.on("error", fail);
+        r.end("{}");
+      });
+      expect(rebind).toBe(403);
+      const pre = await fetch(`${base}/rpc`, { method: "OPTIONS", headers: { origin: "http://localhost:30000" } });
+      expect([pre.status, pre.headers.get("access-control-allow-private-network")]).toEqual([204, "true"]);
+    } finally {
+      await server.stop();
+    }
   });
 
-  it("reads culture names from an Azgaar export", () => {
-    expect(azgaarCultures({ pack: { cultures: [{ i: 0, name: "Wildlands" }, { i: 1, name: "Yotunn" }, { i: 2, name: "Gone", removed: true }] } })).toEqual([{ i: 0, name: "Wildlands" }, { i: 1, name: "Yotunn" }]);
+  it("serves the board with its source and checks GM edits", async () => {
+    const { server, rpc } = await serve();
+    try {
+      expect((await rpc("nemesis.worlds")).body.result).toEqual([{ id: "testland", title: "Testland, 1183 NE", source: "map-maker", counts: { persons: 5, factions: 3, towns: 4, armies: 0, events: 0, rumors: 0 } }]);
+      const board = (await rpc("nemesis.board", { world: "testland" })).body.result;
+      expect(board.world).toEqual({ id: "testland", title: "Testland, 1183 NE", source: "map-maker", mapMaker: { world: "testland" } });
+      expect([board.factions[0].ruler.name, board.factions[0].archmages[0].name, board.factions[0].state]).toEqual(["King Dimitrios VI", "Grand Magus", 2]);
+      expect((await rpc("nemesis.put", { world: "testland", kind: "persons", record: { id: "alice", name: "Alice", rank: "villager", static: { hp: 40 }, state: "alive" } })).body.error.message).toMatch(/a villager has 300 to 600 HP, not 40/);
+      expect((await rpc("nemesis.put", { world: "testland", kind: "persons", record: { id: "alice", name: "Alice", rank: "villager", static: { hp: 400 }, faction: "march", state: "alive" } })).body.result).toEqual({ ok: true });
+      expect((await rpc("nemesis.get", { world: "testland", kind: "persons", id: "alice" })).body.result).toMatchObject({ static: { hp: 400 }, source: "gm" });
+      expect((await rpc("nemesis.board", { world: "../etc" })).body.error.message).toBe("bad world id");
+      expect((await rpc("nemesis.board", { world: "elsewhere" })).body.error.message).toMatch(/no Nemesis records for world "elsewhere"/);
+      expect((await rpc("nemesis.list", { world: "testland", kind: "secrets" })).body.error.message).toMatch(/kind must be one of/);
+      expect((await rpc("maps.list")).body.error.message).toBe("unknown method maps.list");
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe("standalone world from Azgaar", () => {
+  const az = {
+    info: { mapName: "Ogeia" },
+    pack: {
+      cells: [{ religion: 0 }, { religion: 1 }, { religion: 4 }],
+      cultures: [{ i: 0, name: "Wildlands" }, { i: 1, name: "Yotunn" }, { i: 2, name: "Gone", removed: true }],
+      religions: [{ i: 0, name: "No religion" }, { i: 1, name: "Yotunn Faith" }, { i: 4, name: "Kentian Beliefs" }],
+      states: [{ i: 0, name: "Neutrals" }, { i: 2, name: "March", form: "Kingdom", fullName: "Kingdom of March", culture: 1, capital: 140 }, { i: 5, name: "Old", removed: true }],
+      burgs: [0, { i: 140, name: "Zugkatil", cell: 1, state: 2 }, { i: 119, name: "Narkoc", cell: 2, state: 2 }, { i: 9, name: "Razed", removed: true }],
+    },
+  };
+
+  it("reads realms, towns, faiths and culture names from the export alone", () => {
+    expect(azgaarCultures(az)).toEqual([{ i: 0, name: "Wildlands" }, { i: 1, name: "Yotunn" }]);
     expect(() => azgaarCultures({})).toThrow(/not an Azgaar full JSON export/);
+    const { world: w, title } = azgaarWorld(az);
+    expect(title).toBe("Ogeia");
+    expect(w.states.find((s) => s.id === 2)).toEqual({ id: 2, name: "March", form: "Kingdom", fullName: "Kingdom of March", culture: 1, religion: 1, capital: 140, origin: "old", alive: true });
+    expect(w.burgs.map((b) => b.name)).toEqual(["Zugkatil", "Narkoc"]);
+    const items = worldRecords({ aged: w, cultures: azgaarCultures(az) });
+    expect(items.find((i) => i.record.id === "march")!.record).toMatchObject({ culture: "Yotunn", faith: "Yotunn Faith", capital: 140 });
+    expect(items.filter((i) => i.kind === "persons")).toEqual([]); // no lore, no rulers
+    expect(atlasOf(w, { source: "azgaar", title })).toEqual({ source: "azgaar", title: "Ogeia", realms: [{ id: 2, name: "Kingdom of March" }], towns: [{ id: 140, name: "Zugkatil", state: 2 }, { id: 119, name: "Narkoc", state: 2 }] });
   });
 });

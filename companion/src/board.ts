@@ -5,7 +5,7 @@
  * carries GM notes and secrets.
  */
 
-import type { World } from "./world";
+import type { Atlas } from "./world";
 import type { NemesisStore, NRecord } from "./store";
 
 export interface PersonCard {
@@ -46,6 +46,8 @@ export interface FactionView {
   id: string;
   name: string;
   kind: string;
+  /** The source world's state id (Map Maker and Azgaar share them). */
+  state?: number;
   culture?: string;
   faith?: string;
   capital?: { id: number; name: string };
@@ -62,7 +64,8 @@ export interface FactionView {
 }
 
 export interface Board {
-  world: { id: string; title?: string };
+  /** Where the world came from; mapMaker names the Map Maker world whose Foundry journals to link. */
+  world: { id: string; title?: string; source?: Atlas["source"]; mapMaker?: { world: string } };
   factions: FactionView[];
   outside: PersonCard[];
 }
@@ -70,8 +73,8 @@ export interface Board {
 const RANK_ORDER = ["monarch", "archmage", "general", "captain", "veteran", "soldier", "villager", "unranked"];
 const byRank = (a: PersonCard, b: PersonCard) => RANK_ORDER.indexOf(a.rank ?? "unranked") - RANK_ORDER.indexOf(b.rank ?? "unranked") || a.name.localeCompare(b.name);
 
-export function buildBoard(store: NemesisStore, aged: World | undefined): Board {
-  const towns = new Map((aged?.burgs ?? []).map((b) => [b.id, b.name]));
+export function buildBoard(store: NemesisStore, atlas: Atlas | undefined): Board {
+  const towns = new Map((atlas?.towns ?? []).map((b) => [b.id, b.name]));
   const persons = new Map(store.list("persons").map((p) => [p.id, p]));
   const card = (p: NRecord): PersonCard => ({
     id: p.id, name: p.name, aliases: p.aliases ?? [], species: p.species, look: p.look, rank: p.rank, role: p.role, state: p.state,
@@ -103,7 +106,7 @@ export function buildBoard(store: NemesisStore, aged: World | undefined): Board 
       chain.push({ person: card(p), under: tree(p.id) });
     }
     return {
-      id: f.id, name: f.name, kind: f.kind, culture: f.culture, faith: f.faith,
+      id: f.id, name: f.name, kind: f.kind, state: f.state, culture: f.culture, faith: f.faith,
       capital: f.capital !== undefined ? { id: f.capital, name: towns.get(f.capital) ?? `town ${f.capital}` } : undefined,
       towns: townCount.get(f.id) ?? 0, summary: f.summary, goals: f.goals ?? [], unrest: f.unrest ?? 0,
       ruler: f.ruler && persons.has(f.ruler) ? card(persons.get(f.ruler)!) : undefined,
@@ -117,5 +120,5 @@ export function buildBoard(store: NemesisStore, aged: World | undefined): Board 
   const known = (f: FactionView) => f.archmages.length + f.chain.length + f.people.length;
   factions.sort((a, b) => known(b) - known(a) || b.towns - a.towns || a.name.localeCompare(b.name));
   const outside = [...persons.values()].filter((p) => !p.faction || !store.get("factions", p.faction)).map(card).sort(byRank);
-  return { world: { id: store.world, title: store.meta.title }, factions, outside };
+  return { world: { id: store.world, title: store.meta.title ?? atlas?.title, source: atlas?.source, mapMaker: atlas?.mapMaker }, factions, outside };
 }

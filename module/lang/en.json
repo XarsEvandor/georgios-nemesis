@@ -3,9 +3,7 @@
     "Open": "Nemesis board",
     "Loading": "Asking the companion for the board...",
     "Refresh": "Refresh",
-    "NeedsMapMaker": "Georgios' Nemesis needs Georgios' Map Maker to be active, with its companion running.",
-    "NoWorlds": "The companion has no Nemesis records yet. Run the Nemesis import for this world first.",
-    "NoPlugin": "The Map Maker companion has not loaded Georgios' Nemesis. Restart the companion; it looks for the georgios-nemesis folder beside georgios-map-maker.",
+    "NoWorlds": "The Nemesis companion has no worlds yet. Run its import for this world first (npm run import in georgios-nemesis).",
     "NoFactions": "No factions in this world.",
     "GmOnlyBoard": "Only the GM can open the nemesis board.",
     "Towns": "{n} towns",
@@ -58,6 +56,26 @@
       "missing": "missing",
       "dead": "dead",
       "harvested": "harvested"
+    },
+    "NotRunning": "The Nemesis companion is not running.",
+    "Answered": "The Nemesis companion answered {status}.",
+    "BadUrl": "The Nemesis companion address must start with http:// or https://.",
+    "StartCompanion": "Start the companion",
+    "OpenMapMaker": "Open the Map Maker journal",
+    "Journal": "journal",
+    "CompanionUrl": "Nemesis companion address",
+    "CompanionUrlHint": "Where the Nemesis companion listens on the GM computer. Default http://127.0.0.1:47120.",
+    "LauncherUrl": "Georgios launcher address",
+    "LauncherUrlHint": "Where Georgios launcher listens; it starts the companion when you press Start. Default http://127.0.0.1:47100.",
+    "Launcher": {
+      "NotRunning": "The Nemesis companion is not running. Start it now?",
+      "Start": "Start",
+      "NotNow": "Not now",
+      "NoLauncher": "Georgios launcher is not answering, so the Nemesis companion cannot be started from here. Start it by hand: npm run serve in the georgios-nemesis folder.",
+      "NotConfigured": "Georgios launcher does not know the Nemesis companion yet: add a \"nemesis\" service to georgios-launcher/config.json.",
+      "Starting": "Starting the Nemesis companion...",
+      "Ready": "The Nemesis companion is running.",
+      "Slow": "The Nemesis companion has not answered yet. Check georgios-launcher/logs/nemesis.log."
     }
   }
 }

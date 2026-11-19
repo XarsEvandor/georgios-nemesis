@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Georgios' Nemesis: named people with memory and motives, and factions with courts and chains of command, for a Georgios' Map Maker world in Foundry VTT.",
+  "description": "Georgios' Nemesis: named people with memory and motives, and factions with courts and chains of command, for Foundry VTT. Runs on its own; builds on Georgios' Map Maker and Georgios Scribbler when they are there.",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
+    "serve": "tsx companion/src/cli/serve.ts",
     "import": "tsx companion/src/cli/import.ts"
   },
   "devDependencies": {
