@@ -13,10 +13,12 @@
  */
 
 import { esc, pickedArt, pickWorld } from "./board-html.js";
-import { createInFoundry, dressTokens, folder, paint } from "./people.js";
+import { createInFoundry, dressTokens, folder, openCard, paint } from "./people.js";
+import { track } from "./progress.js";
 
 const MODULE_ID = "georgios-nemesis";
 const MAP_MAKER = "georgios-map-maker";
+const SCRIBBLER = "georgios-scribbler";
 const ROOT = "Georgios' Nemesis";
 
 /** { rpc, t, base, NotRunning } from main.js. */
@@ -25,6 +27,8 @@ const running = new Map();
 const again = new Set();
 /** Main people being written now (world|place|role|n). */
 const writing = new Set();
+/** Their sketches, while the full card is still being written (same keys). */
+const sketches = new Map();
 let toldDown = false;
 let worlds = null;
 let actorChain = Promise.resolve();
@@ -77,6 +81,34 @@ function report(e, what) {
   ui.notifications.warn(`${what}: ${e.message}`);
 }
 
+/**
+ * What a townsperson's token still is: Map Maker's placeholder ("Alys, dockworker" -> given "Alys"),
+ * the person Nemesis cast it as, or renamed by the GM (someone now: never recast).
+ */
+function placeholderOf(tk) {
+  const c = tk.getFlag(MODULE_ID, "cast");
+  if (c) {
+    if (c.person) return { given: String(c.orig ?? "").split(",")[0].trim() };
+    const ours = tk.name === `${c.name}, ${c.label ?? c.role}`;
+    return ours ? { given: String(c.orig ?? "").split(",")[0].trim() } : { renamed: true };
+  }
+  const m = String(tk.name ?? "").match(/^([^,]+),\s*(.+)$/);
+  const role = String(tk.getFlag(MAP_MAKER, "role") ?? "").trim().toLowerCase();
+  if (!m || m[2].trim().toLowerCase() !== role) return { renamed: true };
+  return { given: m[1].trim() };
+}
+
+/** Names of the Scribbler's entries and their aliases (the people the table has met), when it is active. */
+function scribblerNames() {
+  if (!active(SCRIBBLER)) return [];
+  const out = [];
+  for (const j of game.journal) {
+    if (j.getFlag(SCRIBBLER, "kind") !== "entity") continue;
+    out.push(j.name, ...(j.getFlag(SCRIBBLER, "aliases") ?? []));
+  }
+  return out.filter((s) => typeof s === "string" && s.trim());
+}
+
 /** The town and place of a Map Maker place scene, from its city scene and the city's pin for it. */
 function placeOf(scene) {
   const key = scene.getFlag(MAP_MAKER, "city");
@@ -127,20 +159,31 @@ async function castScene(scene) {
   if (!world) return;
   // Map Maker's own placeholder name seeds each person, so a re-placed scene brings them back.
   const seeds = tokens.map((tk) => tk.getFlag(MODULE_ID, "cast")?.orig ?? tk.name);
-  const slow = setTimeout(() => ui.notifications.info(api.t("Cast.FirstFolk")), 8000);
+  const marks = tokens.map(placeholderOf);
+  // Usually instant; the corner panel shows it only when it is not (a culture's first folk book).
+  let row = null;
+  const slow = setTimeout(() => (row = track({ title: scene.name, detail: api.t("Progress.Casting") })), 1500);
+  const slower = setTimeout(() => row?.update({ detail: api.t("Progress.FirstFolk") }), 8000);
   let res;
   try {
     res = await api.rpc("nemesis.cast", {
-      world, townName: where.townName, place: where.place, scene: scene.name,
-      people: tokens.map((tk, i) => ({ kind: tk.getFlag(MAP_MAKER, "kind"), role: tk.getFlag(MAP_MAKER, "role"), seed: seeds[i] })),
+      world, townName: where.townName, place: where.place, scene: scene.name, known: scribblerNames(),
+      people: tokens.map((tk, i) => ({ kind: tk.getFlag(MAP_MAKER, "kind"), role: tk.getFlag(MAP_MAKER, "role"), seed: seeds[i], ...marks[i] })),
     });
+    row?.remove();
+  } catch (e) {
+    row?.fail(e.message);
+    throw e;
   } finally {
     clearTimeout(slow);
+    clearTimeout(slower);
   }
-  const actors = await folkActors(world, res.culture, res.people.filter((r) => !r.person));
+  const actors = await folkActors(world, res.culture, res.people.filter((r) => !r.person && !r.skip));
   const ups = [];
   for (const [i, tk] of tokens.entries()) {
     const r = res.people[i];
+    // Someone the table knows, or a token the GM renamed: left exactly as it is.
+    if (r.skip) continue;
     const label = tk.getFlag(MAP_MAKER, "role") ?? r.role;
     const cast = {
       orig: seeds[i], world, culture: res.culture, town: res.town, faction: res.faction ?? null, kind: tk.getFlag(MAP_MAKER, "kind") ?? "commoner",
@@ -161,9 +204,10 @@ async function castScene(scene) {
     ups.push(up);
   }
   if (ups.length) await scene.updateEmbeddedDocuments("Token", ups);
-  for (const r of res.people.filter((x) => x.person)) await dressPerson(world, res, r.person);
-  for (const r of res.people.filter((x) => x.main && !x.person)) {
-    writeKeeper(world, { town: res.town, faction: res.faction }, r).catch((e) => report(e, api.t("Cast.KeeperFailed", { role: r.role })));
+  for (const r of res.people.filter((x) => x.person && !x.skip)) await dressPerson(world, res, r.person);
+  for (const r of res.people.filter((x) => x.main && !x.person && !x.skip)) {
+    // A failure shows on its row in the corner panel; a stopped companion is told once.
+    writeKeeper(world, { town: res.town, faction: res.faction }, r).catch((e) => (e instanceof api.NotRunning ? report(e, "") : console.error(`${MODULE_ID} | ${r.role}`, e)));
   }
 }
 
@@ -193,16 +237,30 @@ async function markPost(post, personId) {
   }
 }
 
-/** Claude writes one of a scene's main people; then their actor, journal, tokens and portrait. */
+/**
+ * Claude writes one of a scene's main people; then their actor, journal, tokens and portrait. The
+ * corner panel follows it: writing, then the card (click to open) while the portrait paints, then done.
+ */
 async function writeKeeper(world, where, r) {
   const k = `${world}|${postKey(r.post)}`;
   if (writing.has(k)) return;
   writing.add(k);
+  const row = track({ title: r.folk.name, detail: api.t("Progress.Sketching", { role: r.role, town: where.town.name }) });
+  const ask = { world, town: where.town.id, place: r.post.place, role: r.role, n: r.post.n, scene: r.post.scene, rank: r.rank, name: r.folk.name, species: r.folk.species };
   try {
-    ui.notifications.info(api.t("Cast.Writing", { name: r.folk.name, role: r.role, town: where.town.name }));
-    const out = await api.rpc("nemesis.keeper", {
-      world, town: where.town.id, place: r.post.place, role: r.role, n: r.post.n, scene: r.post.scene, rank: r.rank, name: r.folk.name, species: r.folk.species,
-    });
+    // First the sketch (seconds), so the GM can introduce them while the full card is written.
+    let sketch;
+    try {
+      sketch = (await api.rpc("nemesis.sketch", ask)).sketch;
+      const s = { name: r.folk.name, species: r.folk.species, role: r.role, sketch };
+      sketches.set(k, s);
+      row.sketch(() => showSketch(s), api.t("Progress.SketchReady"));
+    } catch (e) {
+      if (e instanceof api.NotRunning) throw e;
+      console.warn(`${MODULE_ID} | no sketch for the ${r.role}; writing the card straight away`, e);
+      row.update({ detail: api.t("Progress.Writing", { role: r.role, town: where.town.name }) });
+    }
+    const out = await api.rpc("nemesis.keeper", { ...ask, ...(sketch ? { sketch } : {}) });
     let record = out.person;
     if (!(record.links?.actor && (await fromUuid(record.links.actor)))) {
       const faction = where.faction ? await api.rpc("nemesis.get", { world, kind: "factions", id: where.faction }).catch(() => null) : null;
@@ -210,22 +268,41 @@ async function writeKeeper(world, where, r) {
     }
     await markPost(r.post, record.id);
     await dressTokens(record);
+    sketches.delete(k);
     const caps = await api.rpc("nemesis.capabilities").catch(() => ({}));
     const paintNow = !!caps.portraits && !pickedArt(record.art);
-    ui.notifications.info(api.t(paintNow ? "Cast.Ready" : "Cast.ReadyNoArt", { name: record.name }));
-    if (paintNow) {
-      const next = await paint({ base: api.base(), world, record, rpc: api.rpc });
-      ui.notifications.info(api.t("Cast.Painted", { name: next.name }));
-    }
+    row.update({ title: record.name });
+    if (!paintNow) return row.done({ open: record.links?.journal, detail: api.t("Progress.Done") });
+    row.ready(record.links?.journal, api.t("Progress.Painting"));
+    await paint({ base: api.base(), world, record, rpc: api.rpc });
+    row.done({ detail: api.t("Progress.Done") });
+  } catch (e) {
+    row.fail(e.message);
+    e.inPanel = true;
+    throw e;
   } finally {
     writing.delete(k);
   }
 }
 
-/** The Nemesis button on a Map Maker townsperson's token HUD. */
+/** The sketch in a small window: enough to introduce them now. */
+function showSketch(s) {
+  const t = api.t;
+  const p = (label, v) => (v ? `<p><strong>${esc(label)}:</strong> ${esc(v)}</p>` : "");
+  const lines = s.sketch.lines?.length ? `<p><strong>${esc(t("Sketch.Lines"))}:</strong></p><ul>${s.sketch.lines.map((l) => `<li><em>"${esc(l)}"</em></li>`).join("")}</ul>` : "";
+  new foundry.applications.api.DialogV2({
+    window: { title: s.name, icon: "fa-solid fa-feather" },
+    classes: ["gn-sketch-app"],
+    position: { width: 480 },
+    content: `<div class="gn-sketch"><p class="gn-sketch-who">${esc([s.species, s.role].filter(Boolean).join(", "))}</p>${p(t("Sketch.Look"), s.sketch.look)}${p(t("Sketch.Mannerisms"), s.sketch.mannerisms)}${p(t("Sketch.Voice"), s.sketch.voice)}${lines}<p class="gn-hint">${esc(t("Sketch.Hint"))}</p></div>`,
+    buttons: [{ action: "close", label: t("Cast.Close"), default: true }],
+  }).render({ force: true });
+}
+
+/** The Nemesis button on the token HUD: Map Maker's townsfolk, and anyone whose actor is a Nemesis person. */
 function addHudButton(hud, html) {
   const tk = hud.object?.document;
-  if (!game.user.isGM || !tk?.getFlag(MAP_MAKER, "person")) return;
+  if (!game.user.isGM || !tk || !(tk.getFlag(MAP_MAKER, "person") || tk.actor?.getFlag(MODULE_ID, "person"))) return;
   const root = html instanceof HTMLElement ? html : html?.[0];
   const col = root?.querySelector(".col.right") ?? root;
   if (!col || col.querySelector(".gn-hud")) return;
@@ -237,7 +314,12 @@ function addHudButton(hud, html) {
   b.addEventListener("click", (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    whoIs(tk).catch((e) => report(e, api.t("Cast.Hud")));
+    whoIs(tk).catch((e) => {
+      if (e instanceof api.NotRunning) return report(e, "");
+      console.error(`${MODULE_ID} | ${api.t("Cast.Hud")}`, e);
+      // A write-up's failure already shows on its row in the corner panel.
+      if (!e.inPanel) ui.notifications.warn(`${api.t("Cast.Hud")}: ${e.message}`);
+    });
   });
   col.append(b);
 }
@@ -246,23 +328,17 @@ async function whoIs(tk) {
   const c = tk.getFlag(MODULE_ID, "cast");
   const t = api.t;
   const DialogV2 = foundry.applications.api.DialogV2;
+  // A Nemesis person's own token (placed from their actor, not one of Map Maker's): their full card.
+  const personId = tk.actor?.getFlag(MODULE_ID, "person");
+  const personWorld = tk.actor?.getFlag(MODULE_ID, "world");
+  if (personId && personWorld && !c) return openCard({ world: personWorld, personId, rpc: api.rpc, t });
   if (!c) return ui.notifications.info(`${tk.name}: ${t("Cast.SettingHint")}`);
   const row = (label, v) => (v ? `<p><strong>${esc(label)}:</strong> ${esc(v)}</p>` : "");
-  if (c.person) {
-    const record = await api.rpc("nemesis.get", { world: c.world, kind: "persons", id: c.person });
-    const choice = await DialogV2.wait({
-      window: { title: record.name },
-      content: `<div class="gn-form">${row(t("Cast.Role"), c.label)}${row(t("Cast.Species"), record.species)}<p>${esc(record.look ?? "")}</p><p class="gn-hint">${esc(t("Cast.Written", { name: record.name }))}</p></div>`,
-      buttons: [
-        { action: "actor", label: t("Cast.OpenActor"), icon: "fa-solid fa-user-shield" },
-        { action: "journal", label: t("Cast.OpenJournal"), icon: "fa-solid fa-book", default: true },
-      ],
-      rejectClose: false,
-    });
-    const uuid = choice === "actor" ? record.links?.actor : choice === "journal" ? record.links?.journal : null;
-    if (uuid) (await fromUuid(uuid))?.sheet?.render(true);
-    return;
-  }
+  // Written up: straight to their full card. Being written: their sketch, once it is in.
+  if (c.person) return openCard({ world: c.world, personId: c.person, rpc: api.rpc, t });
+  const key = c.post ? `${c.world}|${postKey(c.post)}` : null;
+  if (key && sketches.has(key)) return showSketch(sketches.get(key));
+  if (key && writing.has(key)) return ui.notifications.info(t("Progress.Busy", { name: c.name }));
   const go = await DialogV2.confirm({
     window: { title: c.name },
     content: `<div class="gn-form">${row(t("Cast.Role"), c.label)}${row(t("Cast.Species"), c.species)}${row(t("Look").replace(/:$/, ""), c.look)}${row(t("Cast.Manner"), c.manner)}${row(t("Cast.Rank"), t(`Rank.${c.rank}`))}<p class="gn-hint">${esc(t("Cast.Background"))}</p><p class="gn-hint">${esc(t("Cast.WriteUpHint"))}</p></div>`,

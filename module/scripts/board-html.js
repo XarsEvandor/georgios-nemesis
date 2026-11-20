@@ -86,8 +86,11 @@ export function cardHtml(p, ctx) {
   ].join("");
   const own = [
     p.actor ? `<a class="gn-link" data-uuid="${esc(p.actor)}" data-tooltip="${esc(t("OpenActor"))}"><i class="fa-solid fa-user-shield"></i> ${esc(t("Actor"))}</a>` : "",
-    p.journal ? `<a class="gn-link" data-uuid="${esc(p.journal)}" data-tooltip="${esc(t("OpenJournal"))}"><i class="fa-solid fa-book"></i> ${esc(t("Journal"))}</a>` : "",
+    p.journal ? `<a class="gn-link" data-uuid="${esc(p.journal)}" data-card="${esc(p.id)}" data-tooltip="${esc(t("OpenJournal"))}"><i class="fa-solid fa-book"></i> ${esc(t("Journal"))}</a>` : "",
     ctx.canPaint && p.actor && !ctx.painting?.has(p.id) ? `<a class="gn-link" data-paint="${esc(p.id)}" data-tooltip="${esc(t("PaintHint"))}"><i class="fa-solid fa-palette"></i> ${esc(t(p.art?.final || p.art?.layout ? "Repaint" : "Paint"))}</a>` : "",
+    // On record but never written in full (a session's NPC, a seeded ruler): Claude writes the card, keeping what the table knows.
+    ctx.canGenerate && !p.written && !p.plotLocked && p.rank && p.rank !== "unranked" && !ctx.writing?.has(p.id) ? `<a class="gn-link" data-writeup="${esc(p.id)}" data-tooltip="${esc(t("WriteUpHint"))}"><i class="fa-solid fa-feather-pointed"></i> ${esc(t("WriteUp"))}</a>` : "",
+    p.actor ? `<a class="gn-link" data-place-actor="${esc(p.actor)}" data-tooltip="${esc(t("PlaceHint"))}"><i class="fa-solid fa-location-dot"></i> ${esc(t("PlaceOnScene"))}</a>` : "",
   ].join("");
   return `<article class="gn-card ${p.plotLocked ? "gn-plotlocked" : ""}" data-person="${esc(p.id)}">
     ${portraitHtml(p, ctx)}
@@ -165,13 +168,28 @@ function townsfolkHtml(groups, ctx) {
 
 const townsfolkCount = (f) => (f.townsfolk ?? []).reduce((n, g) => n + g.people.length, 0);
 
+/**
+ * The portraits at the top of a person's card: the repaint and the layout side by side, which one
+ * is on the token, and a link on each that shows that picture (only the picture) to the players.
+ * Empty until the portrait is painted; Nemesis fills it in then.
+ */
+export function artHtml(person, t) {
+  const art = person.art ?? {};
+  const picked = art.picked ?? "final";
+  const fig = (which) => (art[which]
+    ? `<figure class="gn-card-art"><img src="${esc(art[which])}" alt="${esc(person.name)}"><figcaption>${esc(t(`Card.${which}`))}${picked === which ? ` <em>${esc(t("Card.OnActor"))}</em>` : ""}<br><a class="gn-show-players"><i class="fa-solid fa-eye"></i> ${esc(t("Card.ShowPlayers"))}</a></figcaption></figure>`
+    : "");
+  return `<div class="gn-art">${fig("final")}${fig("layout")}${fig("own")}</div>`;
+}
+
 /** The GM journal page for a person record (the companion's record, not the board card). */
 export function journalHtml(person, t) {
   const s = person.static ?? {};
   const d = person.dynamic ?? {};
   const n = person.notes ?? {};
   const li = (xs) => (xs?.length ? `<ul>${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "");
-  const row = (k, v) => (v ? `<p><strong>${esc(k)}:</strong> ${esc(v)}</p>` : "");
+  // Labels may carry their own colon ("Looks:" on the board).
+  const row = (k, v) => (v ? `<p><strong>${esc(String(k).replace(/:$/, ""))}:</strong> ${esc(v)}</p>` : "");
   const item = (k, v) => (v ? `<li><strong>${esc(k)}:</strong> ${esc(v)}</li>` : "");
   const block = (title, items) => {
     const body = items.join("");
@@ -183,8 +201,9 @@ export function journalHtml(person, t) {
   const m = n.mind ?? {};
   const tc = n.tactics ?? {};
   const r = n.roleplay ?? {};
+  // No name heading: Foundry shows the page's title (the person's name) above it.
   return [
-    `<h1>${esc(person.name)}</h1>`,
+    artHtml(person, t),
     `<p><em>${esc([person.species, person.rank ? t(`Rank.${person.rank}`) : "", person.role].filter(Boolean).join(", "))}</em></p>`,
     row(t("Look"), person.look),
     row(t("Personality"), person.personality),

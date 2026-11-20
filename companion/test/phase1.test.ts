@@ -242,7 +242,10 @@ describe("Foundry pages for a generated person", () => {
     const { person } = await generatePerson({ store: s, claude: new FakeClaude([card()]), atlas, req: { faction: "march", rank: "captain" } });
     const t = (key: string, data?: Record<string, unknown>) => (data ? `${key}(${Object.values(data).join(",")})` : key);
     const page = journalHtml(person, t);
-    for (const bit of ["<h1>Vorga Ironhorn</h1>", "minotaur, Rank.captain, Captain of the Zugkatil harbour watch", "Hates open water", "Matter 3, Forces 2", "<strong>Chain Tide</strong> (Matter, Area, 13+)", "The chains wrap the deck under them"]) expect(page).toContain(bit);
+    for (const bit of ["minotaur, Rank.captain, Captain of the Zugkatil harbour watch", "Hates open water", "Matter 3, Forces 2", "<strong>Chain Tide</strong> (Matter, Area, 13+)", "The chains wrap the deck under them"]) expect(page).toContain(bit);
+    // Foundry shows the page title (the name) itself; labels that carry a colon get no second one.
+    expect(page).not.toContain("<h1>");
+    expect(journalHtml(person, (k: string) => (k === "Look" ? "Looks:" : k))).toContain("<strong>Looks:</strong>");
     expect(pickedArt({ final: "f.png", layout: "l.png", picked: "layout" })).toBe("l.png");
     expect(pickedArt({ final: "f.png", layout: "l.png" })).toBe("f.png");
     expect(pickedArt({ own: "mine.png" })).toBe("mine.png");

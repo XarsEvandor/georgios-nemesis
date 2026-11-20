@@ -10,10 +10,11 @@
  * with Georgios Scribbler active it links the Scribbler's entries. Neither is required.
  */
 
-import { OUTSIDE, esc, navHtml, paneHtml, pickWorld } from "./board-html.js";
+import { OUTSIDE, esc, navHtml, paneHtml, pickedArt, pickWorld } from "./board-html.js";
 import { initCast } from "./cast.js";
 import { offerStart, startCompanion } from "./launcher.js";
-import { createInFoundry, paint, pick } from "./people.js";
+import { createInFoundry, initCardArt, openCard, paint, pick, placeOnScene, restoreSpeciesTokens } from "./people.js";
+import { initProgress, track } from "./progress.js";
 
 const MODULE_ID = "georgios-nemesis";
 const MAP_MAKER = "georgios-map-maker";
@@ -97,7 +98,50 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     this.status = null;
     this.busy = false;
     this.painting = new Set();
+    /** People being written up now (ids). */
+    this.writing = new Set();
     this.load();
+  }
+
+  /** A person card on the board, wherever it sits, with its faction. */
+  cardOf(id) {
+    for (const f of this.board?.factions ?? []) {
+      const all = [...[f.ruler, ...f.archmages].filter(Boolean), ...f.people, ...(f.townsfolk ?? []).flatMap((g) => g.people)];
+      const walk = (nodes) => nodes.forEach((n) => (all.push(n.person), walk(n.under)));
+      walk(f.chain);
+      const card = all.find((p) => p.id === id);
+      if (card) return { card, faction: f };
+    }
+    return { card: (this.board?.outside ?? []).find((p) => p.id === id), faction: undefined };
+  }
+
+  /**
+   * Writes up someone on record without a card: Claude writes it keeping what the table knows; then
+   * their actor, their card (GM journal) and their portrait. The corner panel follows it.
+   */
+  async writeUp(id) {
+    if (this.writing.has(id)) return;
+    const { card, faction } = this.cardOf(id);
+    this.writing.add(id);
+    this.render();
+    const row = track({ title: card?.name ?? id, detail: t("Progress.WritingUp") });
+    try {
+      const { person, actor } = await rpc("nemesis.writeup", { world: this.world, id });
+      let record = person;
+      if (!(record.links?.actor && (await fromUuid(record.links.actor)))) {
+        record = await createInFoundry({ world: this.world, person, actor, factionName: faction?.name, sub: card?.home?.name, rpc, t });
+      }
+      row.update({ title: record.name });
+      this.writing.delete(id);
+      await this.load();
+      if (this.caps.portraits && !pickedArt(record.art)) this.paint(record, row);
+      else row.done({ open: record.links?.journal, detail: t("Progress.Done") });
+    } catch (e) {
+      this.writing.delete(id);
+      row.fail(e.message);
+      ui.notifications.error(`${t("WriteUpFailed", { name: card?.name ?? id })}: ${e.message}`);
+      this.render();
+    }
   }
 
   get world() {
@@ -149,30 +193,37 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     if (!form?.rank) return;
     this.busy = true;
     this.setStatus(t("Writing", { rank: t(`Rank.${form.rank}`), faction: f.name }));
+    const row = track({ title: t("Progress.NewPerson", { rank: t(`Rank.${form.rank}`), faction: f.name }), detail: t("Progress.WritingShort") });
     try {
       const { person, actor } = await rpc("nemesis.generate", { world: this.world, faction: f.id, rank: form.rank, superior: form.superior || undefined, note: form.note?.trim() || undefined });
       this.setStatus(t("Making", { name: person.name }));
       const record = await createInFoundry({ world: this.world, person, actor, factionName: f.name, rpc, t });
-      ui.notifications.info(t("Made", { name: person.name }));
+      row.update({ title: record.name });
       this.busy = false;
       this.status = null;
       await this.load();
-      if (this.caps.portraits) this.paint(record);
+      if (this.caps.portraits) this.paint(record, row);
+      else row.done({ open: record.links?.journal, detail: t("Progress.Done") });
     } catch (e) {
       this.busy = false;
       this.setStatus(null);
+      row.fail(e.message);
       ui.notifications.error(`${t("GenerateFailed")}: ${e.message}`, { permanent: true });
     }
   }
 
-  async paint(record) {
+  /** Paints a person; the corner panel row (new or the one Generate made) opens their card meanwhile. */
+  async paint(record, row) {
     if (this.painting.has(record.id)) return;
     this.painting.add(record.id);
     this.render();
+    row ??= track({ title: record.name, detail: t("Progress.Painting") });
+    row.ready(record.links?.journal, t("Progress.Painting"));
     try {
       await paint({ base: companionBase(), world: this.world, record, rpc });
-      ui.notifications.info(t("Painted", { name: record.name }));
+      row.done({ detail: t("Progress.Done") });
     } catch (e) {
+      row.fail(e.message);
       ui.notifications.error(`${t("PaintFailed", { name: record.name })}: ${e.message}`);
     } finally {
       this.painting.delete(record.id);
@@ -191,7 +242,7 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     const places = mapMakerIndex(this.board.world.mapMaker?.world);
     const ctx = {
       t, resolve: (name) => scribbler.get(String(name).trim().toLowerCase()), place: (key) => places.get(key),
-      canGenerate: this.caps.generate, canPaint: this.caps.portraits, busy: this.busy, painting: this.painting,
+      canGenerate: this.caps.generate, canPaint: this.caps.portraits, busy: this.busy, painting: this.painting, writing: this.writing,
     };
     return `<section class="gn-board">
       <div class="gn-side">
@@ -219,8 +270,14 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     }));
     content.querySelectorAll("[data-action='reload']").forEach((el) => el.addEventListener("click", () => this.load()));
     content.querySelectorAll("[data-action='start']").forEach((el) => el.addEventListener("click", async () => (await startCompanion()) && this.load()));
-    content.querySelectorAll(".gn-link[data-uuid]").forEach((el) => el.addEventListener("click", async () => (await fromUuid(el.dataset.uuid))?.sheet?.render(true)));
+    content.querySelectorAll(".gn-link[data-uuid]").forEach((el) => el.addEventListener("click", async () => {
+      // A person's card opens through openCard, which also puts their portraits in it.
+      if (el.dataset.card) return openCard({ world: this.world, personId: el.dataset.card, rpc, t }).catch((e) => ui.notifications.error(e.message));
+      (await fromUuid(el.dataset.uuid))?.sheet?.render(true);
+    }));
     content.querySelectorAll("[data-generate]").forEach((el) => el.addEventListener("click", () => this.generate(el.dataset.generate)));
+    content.querySelectorAll("[data-writeup]").forEach((el) => el.addEventListener("click", () => this.writeUp(el.dataset.writeup)));
+    content.querySelectorAll("[data-place-actor]").forEach((el) => el.addEventListener("click", () => placeOnScene(el.dataset.placeActor, t).catch((e) => ui.notifications.error(e.message))));
     content.querySelectorAll("[data-paint]").forEach((el) => el.addEventListener("click", async () => {
       const record = await rpc("nemesis.get", { world: this.world, kind: "persons", id: el.dataset.paint });
       this.paint(record);
@@ -246,6 +303,12 @@ function openBoard() {
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "companionUrl", { name: "GN.CompanionUrl", hint: "GN.CompanionUrlHint", scope: "client", config: true, type: String, default: "http://127.0.0.1:47120" });
   game.settings.register(MODULE_ID, "launcherUrl", { name: "GN.LauncherUrl", hint: "GN.LauncherUrlHint", scope: "client", config: true, type: String, default: "http://127.0.0.1:47100" });
+  // 2: tokens are species tokens; portraits live on the actor and in the card.
+  game.settings.register(MODULE_ID, "tokenLook", { scope: "world", config: false, type: Number, default: 1 });
+  // The corner panel of what Nemesis is writing and painting.
+  initProgress(t);
+  // Portraits in a person's card: show one to the players, or open it large.
+  initCardArt();
   // Map Maker's townsfolk, recast when the GM opens one of its places (only when Map Maker is active).
   initCast({ rpc, t, base: companionBase, NotRunning });
 });
@@ -263,4 +326,6 @@ Hooks.on("getSceneControlButtons", (controls) => {
 
 Hooks.once("ready", () => {
   game.modules.get(MODULE_ID).api = { openBoard, rpc };
+  // People whose token had become their portrait get their species token back (once per world).
+  restoreSpeciesTokens(rpc, (e) => e instanceof NotRunning).catch((e) => console.warn(`${MODULE_ID} | restoring species tokens`, e));
 });

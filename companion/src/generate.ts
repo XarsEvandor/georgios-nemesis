@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildStatBlock, kitFor, kitText, TRICK_DAMAGE } from "./balance";
 import { CARD_SCHEMA, cardProblems, type Card } from "./card";
-import type { Post } from "./cast";
+import { placeName, roleAt, type Post } from "./cast";
 import type { ClaudeRunner } from "./claude";
 import { slug } from "./import";
 import type { RANKS } from "./schema";
@@ -30,7 +30,7 @@ export interface GenerateRequest {
   note?: string;
   seed?: number;
   /** Facts already shown at the table (a townsperson's name and species on their token). */
-  pin?: { name?: string; species?: string; role?: string };
+  pin?: { name?: string; species?: string; role?: string; look?: string; voice?: string; mannerisms?: string };
   /** Townsfolk: the place and role they keep on Map Maker's maps. */
   post?: Post;
 }
@@ -118,10 +118,17 @@ export function buildPrompt(i: PromptInput): string {
   const pin = i.req.pin ?? {};
   return [
     post
-      ? `Write a townsperson of the ${f.name}: the ${post.role} of ${post.scene ?? "their place"}${i.homeName ? ` in ${i.homeName}` : ""}. They are no soldier or officer; their fight and their small magic come from their trade and their life. In the notes, "underlings" means their apprentices, family or regulars.`
+      ? `Write a townsperson of the ${f.name}: ${roleAt(post.role, placeName(post.scene, i.homeName))}${i.homeName ? ` in ${i.homeName}` : ""}. They are no soldier or officer; their fight and their small magic come from their trade and their life. In the notes, "underlings" means their apprentices, family or regulars.`
       : `Write a ${i.req.rank} of the ${f.name}.`,
-    pin.name || pin.species || pin.role
-      ? `\n## Already shown at the table (keep exactly)\n${[pin.name ? `- Name: ${pin.name}` : "", pin.species ? `- Species: ${pin.species}` : "", pin.role ? `- Role: ${pin.role}` : ""].filter(Boolean).join("\n")}`
+    pin.name || pin.species || pin.role || pin.look || pin.voice || pin.mannerisms
+      ? `\n## Already shown at the table (keep exactly; the GM may have read it aloud)\n${[
+        pin.name ? `- Name: ${pin.name}` : "",
+        pin.species ? `- Species: ${pin.species}` : "",
+        pin.role ? `- Role: ${pin.role}` : "",
+        pin.look ? `- How they look (keep every detail; you may add more): ${pin.look}` : "",
+        pin.voice ? `- Voice: ${pin.voice}` : "",
+        pin.mannerisms ? `- Mannerisms: ${pin.mannerisms}` : "",
+      ].filter(Boolean).join("\n")}`
       : "",
     "",
     "## The faction",
@@ -185,6 +192,8 @@ export async function generatePerson(o: {
     if (req.pin?.name) card.name = req.pin.name;
     if (req.pin?.species) card.species = req.pin.species;
     if (req.pin?.role) card.role = req.pin.role;
+    if (card.notes?.roleplay && req.pin?.voice) card.notes.roleplay.voice = req.pin.voice;
+    if (card.notes?.roleplay && req.pin?.mannerisms) card.notes.roleplay.mannerisms = req.pin.mannerisms;
     last = cardProblems(card, kit);
     let id = slug(card.name ?? "");
     for (let k = 2; store.get("persons", id); k++) id = `${slug(card.name ?? "")}-${k}`;
@@ -223,6 +232,105 @@ export async function generatePerson(o: {
     prompt = `${prompt}\n\n## Your last answer broke these rules; write the person again and fix them\n${last.map((e) => `- ${e}`).join("\n")}`;
   }
   throw new Error(`Claude's person broke the rules ${tries} times: ${last.join("; ")}`);
+}
+
+/** What the table has established about a person on record, for a write-up's prompt. */
+export function establishedText(rec: NRecord, names: Map<string, string> = new Map()): string {
+  const who = (id: string) => names.get(id) ?? id;
+  const lines = (title: string, xs: string[]) => (xs.length ? [`${title}:`, ...xs.map((x) => `- ${x}`)] : []);
+  const spheres = Object.entries((rec.dynamic?.spheres ?? {}) as Record<string, number>);
+  return [
+    `- Name: ${rec.name}${rec.aliases?.length ? ` (also called ${rec.aliases.join(", ")})` : ""}`,
+    rec.species ? `- Species, as the table heard it: ${rec.species}. Name a concrete species that fits these words and the culture's folk, and keep its anatomy.` : "",
+    rec.look ? `- How they look (keep every detail; you may add more): ${rec.look}` : "",
+    rec.role ? `- Role: ${rec.role}` : "",
+    spheres.length ? `- Their Spheres are fixed: ${spheres.map(([s, r]) => `${s} ${r}`).join(", ")}. Use exactly these.` : "",
+    rec.dynamic?.only ? "- They fight with dynamic magic alone: give no attacks and no innate powers." : "",
+    rec.dynamic?.worldview ? `- Worldview: ${rec.dynamic.worldview}` : "",
+    ...lines("Facts the table knows", rec.facts ?? []),
+    ...lines("Wants", rec.wants ?? []),
+    ...lines("Fears", rec.fears ?? []),
+    ...lines("Beliefs", rec.beliefs ?? []),
+    ...lines("Feelings", (rec.feelings ?? []).map((f: { toward: string; feeling: string }) => `toward ${f.toward}: ${f.feeling}`)),
+    ...lines("Knows or believes", (rec.knows ?? []).map((k: { about: string; text: string }) => `about ${k.about}: ${k.text}`)),
+    ...lines("Relationships", (rec.relationships ?? []).map((r: { kind: string; with: string; note?: string }) => `${r.kind} of ${who(r.with)}${r.note ? ` (${r.note})` : ""}`)),
+    ...lines("Commitments", (rec.commitments ?? []).map((c: { kind: string; text: string }) => `${c.kind}: ${c.text}`)),
+    ...lines("What happened with the party", (rec.memory ?? []).map((m: { when: string; text: string }) => `${m.when}: ${m.text}`)),
+  ].filter(Boolean).join("\n");
+}
+
+const union = (a: string[] = [], b: string[] = []) => [...a, ...b.filter((x) => !a.some((y) => y.toLowerCase() === x.toLowerCase()))];
+
+/**
+ * The full card for someone already on record (a session's NPC, a seeded ruler): Claude writes what
+ * is missing (stat block, magic, notes, voice, art prompt) and contradicts nothing the table
+ * established, which stays exactly as it is. Plot-locked people are the GM's alone.
+ */
+export async function writeUpPerson(o: { store: NemesisStore; claude: ClaudeRunner; atlas?: Atlas; lore?: WorldLore; id: string; note?: string; model?: string; tries?: number }): Promise<Generated> {
+  const { store } = o;
+  const rec = store.get("persons", o.id);
+  if (!rec) throw new Error(`no person "${o.id}"`);
+  if (rec.flags?.plotLocked) throw new Error(`${rec.name} is plot-locked: the GM writes them, not Claude`);
+  const rank = rec.rank as Rank | "unranked" | undefined;
+  if (!rank || rank === "unranked") throw new Error(`${rec.name} has no rank on the ladder, so Nemesis cannot size their stat block`);
+  const faction = rec.faction ? store.get("factions", rec.faction) : undefined;
+  if (!faction) throw new Error(`${rec.name} belongs to no faction Nemesis knows`);
+  const kit = kitFor(rank);
+  const rand = rng(Math.floor(Math.random() * 2 ** 31));
+  const persons = store.list("persons");
+  const names = new Map(persons.map((p) => [p.id, p.name as string]));
+  const superior = rec.superior ? store.get("persons", rec.superior) : undefined;
+  const homeName = rec.home !== undefined ? o.atlas?.towns.find((t) => t.id === rec.home)?.name : undefined;
+  const base = buildPrompt({
+    req: { faction: faction.id, rank, superior: superior?.id ?? null, note: o.note },
+    faction, superior, homeName, seeds: {}, lore: o.lore,
+    names: persons.filter((p) => p.id !== rec.id).map((p) => p.name),
+  }).replace(/^Write a [a-z]+ of the [^.\n]+\./, `Write the full card of ${rec.name}, a ${rank} of the ${faction.name} whom the table has already met.`);
+  const firstPrompt = `${base}\n\n## Already established at the table (keep all of it; contradict nothing)\n${establishedText(rec, names)}`;
+  let prompt = firstPrompt;
+  const fixedSpheres = Object.entries((rec.dynamic?.spheres ?? {}) as Record<string, number>);
+  const tries = o.tries ?? 3;
+  let last: string[] = [];
+  for (let n = 1; n <= tries; n++) {
+    const card = (await o.claude.structured({ prompt, system: SYSTEM_PROMPT, schema: CARD_SCHEMA, model: o.model })) as Card;
+    card.name = rec.name;
+    if (fixedSpheres.length) card.spheres = fixedSpheres.map(([sphere, rating]) => ({ sphere: sphere as Card["spheres"][number]["sphere"], rating }));
+    if (rec.dynamic?.only) {
+      card.attacks = [];
+      card.powers = [];
+    }
+    last = cardProblems(card, kit);
+    const statics = buildStatBlock(card, kit, rand);
+    // What the GM set stays: an HP (the Grand Magus' 20,000) and a note on how they fight.
+    if (rec.static?.hp) statics.hp = rec.static.hp;
+    const person: NRecord = {
+      ...rec,
+      ...(union(rec.aliases, card.aliases).length ? { aliases: union(rec.aliases, card.aliases) } : {}),
+      species: card.species,
+      look: card.look,
+      role: rec.role ?? card.role,
+      static: { ...statics, ...(rec.static?.notes ? { notes: rec.static.notes } : {}) },
+      dynamic: {
+        spheres: Object.fromEntries(card.spheres.map((s) => [s.sphere, s.rating])),
+        worldview: rec.dynamic?.worldview ?? card.worldview,
+        tricks: card.tricks,
+        ...(rec.dynamic?.only || (card.attacks.length === 0 && card.powers.length === 0) ? { only: true } : {}),
+      },
+      wants: union(rec.wants, card.wants), fears: union(rec.fears, card.fears), beliefs: union(rec.beliefs, card.beliefs),
+      personality: rec.personality ?? card.personality, combatStyle: rec.combatStyle ?? card.combatStyle,
+      strength: rec.strength ?? card.strength, weakness: rec.weakness ?? card.weakness,
+      notes: card.notes,
+      art: { ...(rec.art ?? {}), prompt: card.art },
+      origin: { ...(rec.origin ?? {}), ...(o.note ? { note: o.note } : {}), ...(o.model ? { model: o.model } : {}) },
+    };
+    if (!last.length) last = store.check("persons", person);
+    if (!last.length) {
+      await store.put("persons", person);
+      return { person, card, tries: n };
+    }
+    prompt = `${firstPrompt}\n\n## Your last answer broke these rules; write the card again and fix them\n${last.map((e) => `- ${e}`).join("\n")}`;
+  }
+  throw new Error(`Claude's card for ${rec.name} broke the rules ${tries} times: ${last.join("; ")}`);
 }
 
 export { TRICK_DAMAGE };

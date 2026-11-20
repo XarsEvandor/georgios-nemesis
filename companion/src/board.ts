@@ -20,6 +20,8 @@ export interface PersonCard {
   home?: { id: number; name: string };
   superior?: { id: string; name: string };
   hp?: number;
+  /** Has a full stat block (written by Nemesis); seeded people may carry only an HP. */
+  written: boolean;
   spheres: Array<{ sphere: string; rating: number }>;
   dynamicOnly: boolean;
   wants: string[];
@@ -88,6 +90,7 @@ export function buildBoard(store: NemesisStore, atlas: Atlas | undefined): Board
     home: p.home !== undefined ? { id: p.home, name: towns.get(p.home) ?? `town ${p.home}` } : undefined,
     superior: p.superior && persons.has(p.superior) ? { id: p.superior, name: persons.get(p.superior)!.name } : undefined,
     hp: p.static?.hp,
+    written: !!p.static?.ac,
     spheres: Object.entries((p.dynamic?.spheres ?? {}) as Record<string, number>).map(([sphere, rating]) => ({ sphere, rating })).sort((a, b) => b.rating - a.rating || a.sphere.localeCompare(b.sphere)),
     dynamicOnly: !!p.dynamic?.only,
     wants: p.wants ?? [], fears: p.fears ?? [], facts: p.facts ?? [], memory: p.memory ?? [], feelings: p.feelings ?? [], knows: p.knows ?? [],

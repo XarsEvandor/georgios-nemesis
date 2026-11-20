@@ -1,8 +1,9 @@
 /**
  * Start the Nemesis companion:  npm run serve
  * Env: NEMESIS_DATA (the data folder, default <repo>/data), NEMESIS_PORT (47120), NEMESIS_MODEL (opus),
+ * NEMESIS_SKETCH_MODEL (sonnet: the quick sketch of a person the GM introduces while the card is written),
  * NEMESIS_ARTGEN (the artgen folder, default ../artgen), NEMESIS_CLAUDE (the claude executable).
- * <data>/config.json may set "port", "origins" (the Foundry addresses allowed to call it), "model",
+ * <data>/config.json may set "port", "origins" (the Foundry addresses allowed to call it), "model", "sketchModel",
  * "artgen" and "launcher".
  * Georgios' launcher starts it from Foundry's Start button; a second copy leaves quietly.
  */
@@ -21,7 +22,7 @@ const data = resolve(process.env.NEMESIS_DATA ?? join(repo, "data"));
 await mkdir(data, { recursive: true });
 const cfgFile = join(data, "config.json");
 const cfg = existsSync(cfgFile)
-  ? (JSON.parse(await readFile(cfgFile, "utf8")) as { port?: number; origins?: string[]; model?: string; artgen?: string; launcher?: string })
+  ? (JSON.parse(await readFile(cfgFile, "utf8")) as { port?: number; origins?: string[]; model?: string; sketchModel?: string; artgen?: string; launcher?: string })
   : {};
 const art = new ArtgenCli(process.env.NEMESIS_ARTGEN ?? cfg.artgen ?? join(repo, "..", "artgen"));
 const server = new NemesisServer({
@@ -33,6 +34,7 @@ const server = new NemesisServer({
     claude: new ClaudeCli({ model: process.env.NEMESIS_MODEL ?? cfg.model ?? "opus" }),
     portraits: new PortraitQueue({ art, worldDir: (w) => join(data, "worlds", w), launcher: cfg.launcher ?? "http://127.0.0.1:47100" }),
     model: process.env.NEMESIS_MODEL ?? cfg.model ?? "opus",
+    sketchModel: process.env.NEMESIS_SKETCH_MODEL ?? cfg.sketchModel ?? "sonnet",
   },
 });
 console.log(art.available() ? `Portraits: artgen in ${art.dir}` : `Portraits off: no artgen in ${art.dir} (set NEMESIS_ARTGEN or "artgen" in data/config.json)`);

@@ -209,7 +209,7 @@ describe("Foundry board HTML", () => {
     const lang = JSON.parse(await readFile(new URL("lang/en.json", dir), "utf8")).GN;
     const has = (path: string) => path.split(".").reduce((o: any, k) => o?.[k], lang) !== undefined;
     const used = new Set<string>();
-    for (const f of ["scripts/main.js", "scripts/board-html.js", "scripts/launcher.js", "scripts/people.js"]) {
+    for (const f of ["scripts/main.js", "scripts/board-html.js", "scripts/launcher.js", "scripts/people.js", "scripts/cast.js", "scripts/progress.js", "scripts/progress-html.js"]) {
       const src = await readFile(new URL(f, dir), "utf8");
       for (const m of src.matchAll(/\bt\("([A-Za-z.]+)"/g)) used.add(m[1]!);
       for (const m of src.matchAll(/\bL\("([A-Za-z]+)"/g)) used.add(`Launcher.${m[1]}`);

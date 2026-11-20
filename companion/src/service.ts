@@ -8,10 +8,11 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { actorData } from "./actor";
 import { buildBoard } from "./board";
-import { castScene, personAt, postKey, rankOfKind, roleKey, type Post } from "./cast";
+import { castScene, knownNames, personAt, postKey, rankOfKind, roleKey, type Post } from "./cast";
 import type { ClaudeRunner } from "./claude";
 import { cultureOf, folkActorData, loadFolkBook, saveFolkBook, writeCulture, type FolkBook } from "./folk";
-import { generatePerson, loadSeedTables, type Rank } from "./generate";
+import { generatePerson, loadSeedTables, writeUpPerson, type Rank } from "./generate";
+import { writeSketch, type Sketch } from "./sketch";
 import type { PortraitQueue } from "./portraits";
 import { KINDS, RANKS, type Kind } from "./schema";
 import { NemesisStore, type NRecord } from "./store";
@@ -27,6 +28,19 @@ export interface ServiceDeps {
   portraits?: PortraitQueue;
   /** Claude model for generation. */
   model?: string;
+  /** Claude model for sketches (fast: the GM introduces the person from it). */
+  sketchModel?: string;
+}
+
+/** A Map Maker place's role, from an RPC's parameters. */
+function postOf(p: Record<string, any>, town: number): Post {
+  return { town, place: String(p.place ?? ""), role: roleKey(String(p.role ?? "")), n: Math.max(0, Math.floor(Number(p.n ?? 0))) || 0, ...(p.scene ? { scene: String(p.scene).slice(0, 200) } : {}) };
+}
+
+/** The sketch of someone already written: from their card. */
+function sketchOf(person: NRecord): Sketch {
+  const r = person.notes?.roleplay ?? {};
+  return { look: person.look ?? "", mannerisms: r.mannerisms ?? "", voice: r.voice ?? "", lines: (r.lines ?? []).slice(0, 2) };
 }
 
 export class NemesisService {
@@ -35,6 +49,8 @@ export class NemesisService {
   private readonly folkWrites = new Map<string, Promise<FolkBook>>();
   /** Townsfolk being written, by world and place, so two looks at a scene write them once. */
   private readonly keepers = new Map<string, Promise<{ person: NRecord; actor: unknown }>>();
+  /** Sketches of townsfolk whose full card is not written yet, by world and place. */
+  private readonly sketches = new Map<string, Promise<Sketch>>();
 
   constructor(readonly dataDir: string, private readonly deps: ServiceDeps = {}) {}
 
@@ -92,11 +108,11 @@ export class NemesisService {
     return existsSync(file) ? (JSON.parse(await readFile(file, "utf8")) as WorldLore) : undefined;
   }
 
-  /** The actor for a person, with the portrait the GM picked or the species token. */
+  /** The actor for a person: the portrait the GM picked as its picture, and always the species token on the map. */
   actorFor(world: string, person: NRecord) {
     const token = speciesToken(person.species, person.rank);
     const picked = person.art?.picked ? person.art[person.art.picked] : undefined;
-    return actorData(person, { world, img: picked ?? token, token: picked ?? token });
+    return actorData(person, { world, img: picked ?? token, token });
   }
 
   worldDir(world: unknown): string {
@@ -180,10 +196,16 @@ export class NemesisService {
         const place = String(p.place ?? "");
         if (!place) throw new Error("place required");
         const book = await this.folkBook(p.world, [culture]);
-        const people = (Array.isArray(p.people) ? p.people : []).slice(0, 300).map((x: Record<string, unknown>) => ({ kind: String(x?.kind ?? "commoner"), role: String(x?.role ?? "townsfolk"), seed: String(x?.seed ?? "") }));
+        const people = (Array.isArray(p.people) ? p.people : []).slice(0, 300).map((x: Record<string, unknown>) => ({
+          kind: String(x?.kind ?? "commoner"), role: String(x?.role ?? "townsfolk"), seed: String(x?.seed ?? ""),
+          ...(typeof x?.given === "string" ? { given: x.given.slice(0, 80) } : {}), ...(x?.renamed ? { renamed: true } : {}),
+        }));
+        // Names the table knows: Nemesis' people and, from Foundry, the Scribbler's entries.
+        const persons = store.list("persons");
+        const known = knownNames(persons, (Array.isArray(p.known) ? p.known : []).slice(0, 2000).map((s: unknown) => String(s).slice(0, 120)));
         return {
           town, faction: faction?.id, culture,
-          people: castScene({ culture, folk: book.cultures[culture]!, town: town.id, place, scene: String(p.scene ?? ""), people, persons: store.list("persons") }),
+          people: castScene({ culture, folk: book.cultures[culture]!, town: town.id, place, scene: String(p.scene ?? ""), people, persons, known }),
         };
       }
       case "nemesis.folkActors": {
@@ -199,12 +221,64 @@ export class NemesisService {
         }
         return out;
       }
+      case "nemesis.writeup": {
+        // The full card for someone already on record (a session's NPC, a seeded ruler), keeping what the table established.
+        if (!this.deps.claude) throw new Error("this companion cannot reach Claude, so it cannot write people");
+        const id = String(p.id ?? "");
+        const key = `${p.world}|writeup|${id}`;
+        let job = this.keepers.get(key);
+        if (!job) {
+          const claude = this.deps.claude;
+          job = (async () => {
+            const store = await this.store(p.world);
+            const g = await writeUpPerson({ store, claude, atlas: await this.atlas(p.world), lore: await this.lore(p.world), id, note: p.note ? String(p.note).slice(0, 2000) : undefined, model: this.deps.model });
+            return { person: g.person, actor: this.actorFor(p.world, g.person) };
+          })();
+          this.keepers.set(key, job);
+          job.finally(() => this.keepers.delete(key)).catch(() => undefined);
+        }
+        return await job;
+      }
+      case "nemesis.sketch": {
+        // Seconds, not a minute: how a scene's person looks, moves and talks, for the GM to introduce them
+        // while the full card is written. Someone already written gets theirs from the card.
+        const store = await this.store(p.world);
+        const { town, faction } = await this.placeOf(p.world, store, p);
+        const post = postOf(p, town.id);
+        if (!post.place || !post.role) throw new Error("place and role required");
+        const had = personAt(store.list("persons"), post);
+        if (had) return { sketch: sketchOf(had), existing: true };
+        if (!this.deps.claude) throw new Error("this companion cannot reach Claude, so it cannot sketch people");
+        const key = `${p.world}|${postKey(post)}`;
+        let job = this.sketches.get(key);
+        if (!job) {
+          const claude = this.deps.claude;
+          job = (async () => {
+            const lore = await this.lore(p.world);
+            const culture = cultureOf(faction, lore);
+            const book = await loadFolkBook(this.worldDir(p.world));
+            const species = String(p.species ?? "").slice(0, 120);
+            return writeSketch({
+              claude, model: this.deps.sketchModel ?? "sonnet",
+              input: {
+                name: String(p.name ?? "").slice(0, 120), species, role: post.role, scene: post.scene, town: town.name, faction: faction?.name,
+                anatomy: culture ? book?.cultures[culture]?.species.find((s) => s.name === species)?.anatomy : undefined,
+                culture, way: culture ? lore?.cultures?.[culture]?.way : undefined,
+              },
+            });
+          })();
+          this.sketches.set(key, job);
+          job.catch(() => this.sketches.delete(key));
+        }
+        return { sketch: await job, existing: false };
+      }
       case "nemesis.keeper": {
-        // One of a scene's main people: their record if Nemesis wrote them before, else Claude writes them now.
+        // One of a scene's main people: their record if Nemesis wrote them before, else Claude writes them now,
+        // keeping the sketch the GM may already have read out.
         const store = await this.store(p.world);
         const { town, faction } = await this.placeOf(p.world, store, p);
         if (!faction) throw new Error(`no faction holds ${town.name}, so Nemesis cannot write its people`);
-        const post: Post = { town: town.id, place: String(p.place ?? ""), role: roleKey(String(p.role ?? "")), n: Math.max(0, Math.floor(Number(p.n ?? 0))) || 0, ...(p.scene ? { scene: String(p.scene).slice(0, 200) } : {}) };
+        const post = postOf(p, town.id);
         if (!post.place || !post.role) throw new Error("place and role required");
         const had = personAt(store.list("persons"), post);
         if (had) return { person: had, actor: had.static?.ac ? this.actorFor(p.world, had) : undefined, existing: true };
@@ -214,16 +288,23 @@ export class NemesisService {
         if (!job) {
           const claude = this.deps.claude;
           const rank: Rank = RANKS.includes(p.rank) && p.rank !== "unranked" ? (p.rank as Rank) : rankOfKind(p.kind);
+          const given = p.sketch && typeof p.sketch === "object" ? (p.sketch as Partial<Sketch>) : undefined;
           job = (async () => {
+            const sketch = given ?? (await this.sketches.get(key)?.catch(() => undefined));
+            const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 2000) : undefined);
             const g = await generatePerson({
               store, claude, atlas: await this.atlas(p.world), lore: await this.lore(p.world), tables: {},
               req: {
                 faction: faction.id, rank, home: town.id, superior: null, post,
-                pin: { name: p.name ? String(p.name).slice(0, 120) : undefined, species: p.species ? String(p.species).slice(0, 120) : undefined, role: post.role },
+                pin: {
+                  name: p.name ? String(p.name).slice(0, 120) : undefined, species: p.species ? String(p.species).slice(0, 120) : undefined, role: post.role,
+                  look: text(sketch?.look), voice: text(sketch?.voice), mannerisms: text(sketch?.mannerisms),
+                },
                 note: p.note ? String(p.note).slice(0, 2000) : undefined,
               },
               model: this.deps.model,
             });
+            this.sketches.delete(key);
             return { person: g.person, actor: this.actorFor(p.world, g.person) };
           })();
           this.keepers.set(key, job);

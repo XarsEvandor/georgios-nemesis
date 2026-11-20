@@ -73,3 +73,35 @@
 .gn-painting i { color: #e0b866; }
 .gn-form { display: flex; flex-direction: column; gap: 8px; }
 .gn-form label { display: flex; flex-direction: column; gap: 2px; }
+
+/* The corner panel (progress.js): what Nemesis is writing and painting, above the player list. */
+.gn-progress { position: fixed; left: 8px; bottom: 120px; z-index: 60; width: 300px; max-width: calc(100vw - 16px); pointer-events: auto; }
+.gn-progress[hidden] { display: none; }
+.gn-progress-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.gn-progress-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(20, 16, 12, 0.88); color: #f1e6cf; border: 1px solid #8a6d3b88; border-radius: 6px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); font-size: 0.85em; line-height: 1.25; }
+.gn-progress-item.gn-openable { cursor: pointer; border-color: #e0b866; }
+.gn-progress-item.gn-openable:hover, .gn-progress-item.gn-openable:focus-visible { background: rgba(60, 45, 20, 0.92); outline: none; }
+.gn-progress-item.gn-failed { border-color: #ff8a7a; }
+.gn-progress-icon { flex: 0 0 auto; width: 16px; text-align: center; color: #e0b866; }
+.gn-done .gn-progress-icon { color: #9fd38a; }
+.gn-failed .gn-progress-icon { color: #ff8a7a; }
+.gn-progress-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.gn-progress-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gn-progress-text span { color: #cfc6b2; }
+.gn-failed .gn-progress-text span { color: #ffb3a8; }
+.gn-progress-time { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: #b9b2a2; }
+.gn-progress-x { flex: 0 0 auto; width: 22px; height: 22px; line-height: 20px; padding: 0; background: none; border: none; color: #b9b2a2; }
+.gn-progress-x:hover { color: #f1e6cf; }
+
+/* Portraits at the top of a person's card (their GM journal page): repaint and layout side by side. */
+.gn-art { display: flex; gap: 10px; margin: 0 0 10px; }
+.gn-art:empty { display: none; }
+.gn-card-art { flex: 1 1 0; min-width: 0; margin: 0; }
+.gn-card-art img { display: block; width: 100%; height: auto; border: 1px solid #8a6d3b88; border-radius: 4px; cursor: zoom-in; }
+.gn-card-art figcaption { margin-top: 2px; font-size: 0.9em; text-align: center; line-height: 1.4; }
+.gn-show-players { cursor: pointer; }
+
+/* The quick sketch window (cast.js). */
+.gn-sketch p { margin: 4px 0; line-height: 1.4; }
+.gn-sketch ul { margin: 2px 0 6px; }
+.gn-sketch-who { font-style: italic; opacity: 0.8; }

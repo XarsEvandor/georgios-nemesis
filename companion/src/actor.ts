@@ -236,7 +236,8 @@ export function actorData(person: NRecord, o: { world: string; img: string; toke
       traits: { size: s.size, dr: { value: s.resistances, bypasses: [], custom: "" }, di: { value: [], bypasses: [], custom: "" }, dv: { value: [], bypasses: [], custom: "" }, ci: { value: [], custom: "" }, languages: { value: ["common"], custom: "" } },
     },
     prototypeToken: {
-      name: person.name, actorLink: true, disposition: -1, displayName: 20, displayBars: 20,
+      // Nemeses made with Generate are enemies; townsfolk and the people the table has met are neutral.
+      name: person.name, actorLink: true, disposition: person.source === "generated" && !person.post ? -1 : 0, displayName: 20, displayBars: 20,
       texture: { src: o.token },
       ring: { enabled: false, colors: { ring: null, background: null }, effects: 1, subject: { scale: 1, texture: null } },
       sight: { enabled: false },

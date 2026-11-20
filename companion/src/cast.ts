@@ -35,6 +35,27 @@ export const rankOfKind = (kind: string | undefined): Rank => RANK_OF_KIND[kind 
 export const roleKey = (role: string | undefined) => String(role ?? "").replace(/,\s*asleep$/i, "").trim().toLowerCase();
 
 /**
+ * A place's own name from Map Maker's scene name: "Chadonvel: Tavern by the gate (Mansion
+ * Furniture)" is "Tavern by the gate" (the town is said apart; the asset pack is not the place's).
+ */
+export function placeName(scene: string | undefined, town?: string): string | undefined {
+  let s = String(scene ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  if (town && s.toLowerCase().startsWith(`${town.toLowerCase()}:`)) s = s.slice(town.length + 1).trim();
+  return s || undefined;
+}
+
+/**
+ * Who they are at the place, without a word that reads two ways ("the patron of a tavern" can be
+ * its owner): "the barkeep of the Tavern by the gate", "a patron at the Tavern by the gate".
+ */
+export function roleAt(role: string, place: string | undefined): string {
+  const keeper = KEEPER_ROLES.has(roleKey(role));
+  const where = place ? `the ${place.replace(/^the\s+/i, "")}` : "";
+  if (keeper) return where ? `the ${role} of ${where}` : `the ${role}`;
+  return where ? `a ${role} at ${where} (not one of its keepers)` : `a ${role}`;
+}
+
+/**
  * The main people of a scene, by index: the keepers whose role names the place ("Alchemist" ->
  * the alchemist); else every keeper when there are one or two; else nobody (a street of shops:
  * the GM picks whom the party talks to).
@@ -69,6 +90,10 @@ export interface CastInput {
   role: string;
   /** Stable per token (Map Maker's own placeholder name and place in its list). */
   seed: string;
+  /** The placeholder's given name ("Alys" of "Alys, dockworker"). */
+  given?: string;
+  /** The GM renamed the token: it is someone now, and stays as it is. */
+  renamed?: boolean;
 }
 
 export interface CastPerson {
@@ -82,6 +107,28 @@ export interface CastPerson {
   main: boolean;
   /** Their record, when Nemesis has written them. */
   person?: { id: string; name: string; species?: string; art?: Record<string, string>; links?: Record<string, unknown> };
+  /**
+   * Left exactly as it is: the GM renamed the token, or its placeholder name is someone the table
+   * has met (a session's NPC played from Map Maker's token). Nemesis never recasts those.
+   */
+  skip?: "renamed" | "known";
+}
+
+const norm = (s: string) => s.normalize("NFKD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+
+/** Names the table knows: every person's name, its first word (not for townsfolk), and their aliases. */
+export function knownNames(persons: NRecord[], extra: string[] = []): Set<string> {
+  const out = new Set<string>();
+  const add = (s: unknown) => {
+    if (typeof s === "string" && s.trim()) out.add(norm(s));
+  };
+  for (const p of persons) {
+    add(p.name);
+    if (!p.post && /^\S+\s/.test(p.name ?? "")) add(String(p.name).split(/\s+/)[0]);
+    for (const a of p.aliases ?? []) add(a);
+  }
+  for (const s of extra) add(s);
+  return out;
 }
 
 /**
@@ -107,8 +154,10 @@ function distinct(c: FolkCulture, pick: FolkPick, usedLooks: Set<string>, usedNa
   return out;
 }
 
-export function castScene(o: { culture: string; folk: FolkCulture; town: number; place: string; scene: string; people: CastInput[]; persons: NRecord[] }): CastPerson[] {
-  const main = new Set(mainIndexes(o.people, o.scene));
+export function castScene(o: { culture: string; folk: FolkCulture; town: number; place: string; scene: string; people: CastInput[]; persons: NRecord[]; known?: Set<string> }): CastPerson[] {
+  const known = o.known ?? knownNames(o.persons);
+  const skipOf = (p: CastInput): CastPerson["skip"] => (p.renamed ? "renamed" : p.given && known.has(norm(p.given)) ? "known" : undefined);
+  const main = new Set(mainIndexes(o.people, o.scene).filter((i) => !skipOf(o.people[i]!)));
   const seen = new Map<string, number>();
   const usedLooks = new Set<string>();
   const usedNames = new Set<string>();
@@ -119,10 +168,12 @@ export function castScene(o: { culture: string; folk: FolkCulture; town: number;
     const folk = distinct(o.folk, pickFolk(o.folk, `${o.place}|${p.seed}`), usedLooks, usedNames);
     const rank = rankOfKind(p.kind);
     const post: Post = { town: o.town, place: o.place, role, n, scene: o.scene };
-    const rec = personAt(o.persons, post);
+    const skip = skipOf(p);
+    const rec = skip ? undefined : personAt(o.persons, post);
     return {
       folk, rank, role, actorKey: folkActorKey(o.culture, folk.species, rank), post, main: main.has(i),
       ...(rec ? { person: { id: rec.id, name: rec.name, species: rec.species, art: rec.art, links: rec.links } } : {}),
+      ...(skip ? { skip } : {}),
     };
   });
 }
