@@ -180,10 +180,15 @@ async function castScene(scene) {
   }
   const actors = await folkActors(world, res.culture, res.people.filter((r) => !r.person && !r.skip));
   const ups = [];
+  const actorIdOf = (person) => String(person?.links?.actor ?? "").split(".").pop();
   for (const [i, tk] of tokens.entries()) {
-    const r = res.people[i];
     // Someone the table knows, or a token the GM renamed: left exactly as it is.
-    if (r.skip) continue;
+    if (res.people[i].skip) continue;
+    // The person already stands here on their own token (Map Maker kept it when it placed the
+    // townsfolk again): this new placeholder for the same place stays background folk.
+    const pid = actorIdOf(res.people[i].person);
+    if (pid && tk.actorId !== pid && scene.tokens.some((o) => o.id !== tk.id && o.actorLink && o.actorId === pid)) res.people[i] = { ...res.people[i], person: undefined, main: false };
+    const r = res.people[i];
     const label = tk.getFlag(MAP_MAKER, "role") ?? r.role;
     const cast = {
       orig: seeds[i], world, culture: res.culture, town: res.town, faction: res.faction ?? null, kind: tk.getFlag(MAP_MAKER, "kind") ?? "commoner",
