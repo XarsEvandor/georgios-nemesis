@@ -200,7 +200,9 @@
       "Shown": "Nemesis: the portrait is on your players' screens (the picture only).",
       "OnActor": "(the actor's picture)",
       "Reroll": "Reroll",
-      "RerollHint": "Paint new portraits, with your corrections if you write any"
+      "RerollHint": "Paint new portraits, with your corrections if you write any",
+      "UseOnActor": "Use on the actor",
+      "UseOnActorHint": "Make this picture the actor's (their sheet picture); the token keeps its species token"
     },
     "WriteUp": "Write up",
     "WriteUpHint": "Claude writes their full card (stat block, magic, notes, voice) keeping everything the table established; then their actor, card and portrait.",

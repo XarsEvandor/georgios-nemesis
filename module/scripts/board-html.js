@@ -176,8 +176,10 @@ const townsfolkCount = (f) => (f.townsfolk ?? []).reduce((n, g) => n + g.people.
 export function artHtml(person, t) {
   const art = person.art ?? {};
   const picked = art.picked ?? "final";
+  // The picture not on the actor can be put there with one click.
+  const use = (which) => `<br><a class="gn-use-art" data-person="${esc(person.id)}" data-which="${which}" data-tooltip="${esc(t("Card.UseOnActorHint"))}"><i class="fa-solid fa-user-check"></i> ${esc(t("Card.UseOnActor"))}</a>`;
   const fig = (which) => (art[which]
-    ? `<figure class="gn-card-art"><img src="${esc(art[which])}" alt="${esc(person.name)}"><figcaption>${esc(t(`Card.${which}`))}${picked === which ? ` <em>${esc(t("Card.OnActor"))}</em>` : ""}<br><a class="gn-show-players"><i class="fa-solid fa-eye"></i> ${esc(t("Card.ShowPlayers"))}</a></figcaption></figure>`
+    ? `<figure class="gn-card-art"><img src="${esc(art[which])}" alt="${esc(person.name)}"><figcaption>${esc(t(`Card.${which}`))}${picked === which ? ` <em>${esc(t("Card.OnActor"))}</em>` : ""}<br><a class="gn-show-players"><i class="fa-solid fa-eye"></i> ${esc(t("Card.ShowPlayers"))}</a>${picked === which ? "" : use(which)}</figcaption></figure>`
     : "");
   // Painted portraits can be painted again, with the GM's corrections (the reroll box).
   const reroll = art.final || art.layout

@@ -48,15 +48,18 @@ export function cardWorld(personId) {
 
 /**
  * Clicks on a card's portraits, wherever the card is open: the link shows that picture to the
- * players; the picture itself opens large for the GM; Reroll opens the reroll box (onReroll).
+ * players; the picture itself opens large for the GM; Reroll opens the reroll box (onReroll);
+ * "Use on the actor" makes that picture the actor's (onPick).
  */
-export function initCardArt({ onReroll } = {}) {
+export function initCardArt({ onReroll, onPick } = {}) {
   document.addEventListener("click", (ev) => {
     const again = ev.target.closest?.(".gn-art .gn-reroll");
-    if (again && game.user.isGM) {
+    const use = again ? null : ev.target.closest?.(".gn-art .gn-use-art");
+    if ((again || use) && game.user.isGM) {
       ev.preventDefault();
       ev.stopPropagation();
-      onReroll?.(again.dataset.person);
+      if (again) onReroll?.(again.dataset.person);
+      else onPick?.(use.dataset.person, use.dataset.which);
       return;
     }
     const link = ev.target.closest?.(".gn-card-art .gn-show-players");

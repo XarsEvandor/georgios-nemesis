@@ -130,6 +130,18 @@ async function reroll({ world, personId }) {
   await paintPerson({ world, record, notes: form.notes || undefined, forget: form.forget });
 }
 
+/** Puts one of a person's pictures (repaint, layout, the GM's own) on their actor, from their card. */
+async function useOnActor(personId, which) {
+  const world = cardWorld(personId) ?? board?.world;
+  if (!world) return ui.notifications.warn(t("Reroll.NoWorld"));
+  try {
+    await pick({ world, personId, which, rpc });
+    if (board?.rendered) await board.load();
+  } catch (e) {
+    ui.notifications.error(e.message);
+  }
+}
+
 /** Everyone in a faction's court and chain, for the "answers to" choice. */
 function leaders(f) {
   const out = [f.ruler, ...f.archmages].filter(Boolean);
@@ -356,8 +368,8 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "tokenLook", { scope: "world", config: false, type: Number, default: 1 });
   // The corner panel of what Nemesis is writing and painting.
   initProgress(t);
-  // Portraits in a person's card: show one to the players, open it large, or paint it again.
-  initCardArt({ onReroll: (personId) => reroll({ personId }) });
+  // Portraits in a person's card: show one to the players, open it large, put it on the actor, or paint it again.
+  initCardArt({ onReroll: (personId) => reroll({ personId }), onPick: (personId, which) => useOnActor(personId, which) });
   // Map Maker's townsfolk, recast when the GM opens one of its places (only when Map Maker is active).
   initCast({ rpc, t, base: companionBase, NotRunning });
 });

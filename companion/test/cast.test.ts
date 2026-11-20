@@ -234,6 +234,8 @@ describe("sketch", () => {
     expect(html).toMatch(/Card\.layout <em>Card\.OnActor<\/em>/);
     expect(html).not.toMatch(/Card\.final <em>/);
     expect(html.match(/gn-show-players/g)).toHaveLength(2);
+    // Only the picture not on the actor offers to go there.
+    expect(html.match(/class="gn-use-art" data-person="ixa" data-which="(\w+)"/g)).toEqual(['class="gn-use-art" data-person="ixa" data-which="final"']);
     expect(artHtml({ name: "Ixa" }, t)).toBe('<div class="gn-art"></div>');
     expect(journalHtml({ name: "Ixa", art: { final: "f.png" } }, t).startsWith('<div class="gn-art"><figure')).toBe(true);
   });
