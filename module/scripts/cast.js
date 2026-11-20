@@ -208,9 +208,13 @@ async function castScene(scene) {
     if (flagSame && tk.name === name && tk.delta?.name === name && tk.actorId === up.actorId && !tk.actorLink && tk.texture.src === up["texture.src"]) continue;
     ups.push(up);
   }
+  const toWrite = res.people.filter((x) => x.main && !x.person && !x.skip);
+  // Someone here will be painted: the art server starts now, so it is up by the time their
+  // picture description is written.
+  if (toWrite.length) api.rpc("nemesis.warmArt").catch(() => undefined);
   if (ups.length) await scene.updateEmbeddedDocuments("Token", ups);
   for (const r of res.people.filter((x) => x.person && !x.skip)) await dressPerson(world, res, r.person);
-  for (const r of res.people.filter((x) => x.main && !x.person && !x.skip)) {
+  for (const r of toWrite) {
     // A failure shows on its row in the corner panel; a stopped companion is told once.
     writeKeeper(world, { town: res.town, faction: res.faction }, r).catch((e) => (e instanceof api.NotRunning ? report(e, "") : console.error(`${MODULE_ID} | ${r.role}`, e)));
   }
@@ -243,8 +247,11 @@ async function markPost(post, personId) {
 }
 
 /**
- * Claude writes one of a scene's main people; then their actor, journal, tokens and portrait. The
- * corner panel follows it: writing, then the card (click to open) while the portrait paints, then done.
+ * Claude writes one of a scene's main people: the sketch first (seconds, for the GM to introduce
+ * them), then their picture description, which goes to the painter at once, while the full card is
+ * written; then their actor, journal and tokens, and the portrait once it is painted. The corner
+ * panel follows it: sketch (click to read), then the card (click to open) while the portrait
+ * finishes, then done.
  */
 async function writeKeeper(world, where, r) {
   const k = `${world}|${postKey(r.post)}`;
@@ -253,18 +260,21 @@ async function writeKeeper(world, where, r) {
   const row = track({ title: r.folk.name, detail: api.t("Progress.Sketching", { role: r.role, town: where.town.name }) });
   const ask = { world, town: where.town.id, place: r.post.place, role: r.role, n: r.post.n, scene: r.post.scene, rank: r.rank, name: r.folk.name, species: r.folk.species };
   try {
-    // First the sketch (seconds), so the GM can introduce them while the full card is written.
+    const caps = await api.rpc("nemesis.capabilities").catch(() => ({}));
     let sketch;
     try {
       sketch = (await api.rpc("nemesis.sketch", ask)).sketch;
       const s = { name: r.folk.name, species: r.folk.species, role: r.role, sketch };
       sketches.set(k, s);
-      row.sketch(() => showSketch(s), api.t("Progress.SketchReady"));
+      row.sketch(() => showSketch(s), api.t(caps.portraits ? "Progress.SketchReadyPainting" : "Progress.SketchReady"));
     } catch (e) {
       if (e instanceof api.NotRunning) throw e;
       console.warn(`${MODULE_ID} | no sketch for the ${r.role}; writing the card straight away`, e);
       row.update({ detail: api.t("Progress.Writing", { role: r.role, town: where.town.name }) });
     }
+    // The portrait starts from the sketch, alongside the full card; the companion hands it to the
+    // person once the card is written (out.job). Failing that, it is painted after the card.
+    if (sketch && caps.portraits) api.rpc("nemesis.keeperPortrait", { ...ask, sketch }).catch((e) => console.warn(`${MODULE_ID} | the ${r.role}'s portrait waits for the card`, e));
     const out = await api.rpc("nemesis.keeper", { ...ask, ...(sketch ? { sketch } : {}) });
     let record = out.person;
     if (!(record.links?.actor && (await fromUuid(record.links.actor)))) {
@@ -274,12 +284,11 @@ async function writeKeeper(world, where, r) {
     await markPost(r.post, record.id);
     await dressTokens(record);
     sketches.delete(k);
-    const caps = await api.rpc("nemesis.capabilities").catch(() => ({}));
     const paintNow = !!caps.portraits && !pickedArt(record.art);
     row.update({ title: record.name });
     if (!paintNow) return row.done({ open: record.links?.journal, detail: api.t("Progress.Done") });
     row.ready(record.links?.journal, api.t("Progress.Painting"));
-    await paint({ base: api.base(), world, record, rpc: api.rpc });
+    await paint({ base: api.base(), world, record, rpc: api.rpc, started: out.job });
     row.done({ detail: api.t("Progress.Done") });
   } catch (e) {
     row.fail(e.message);

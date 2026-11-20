@@ -197,10 +197,11 @@ export async function dressTokens(record) {
  * Paints a person: starts the companion's job, waits for it, brings both images into Foundry,
  * records them (picked: the repaint, until the GM picks otherwise) and dresses the actor.
  * notes: the GM's corrections for this reroll (the companion keeps them for later ones);
- * forget: drop the earlier corrections.
+ * forget: drop the earlier corrections. started: a job already painting them (a scene's keeper,
+ * painted from the sketch while their card was written), to wait for instead of starting one.
  */
-export async function paint({ base, world, record, rpc, onState, notes, forget }) {
-  const { job } = await rpc("nemesis.portrait", { world, id: record.id, ...(notes ? { notes } : {}), ...(forget ? { forget: true } : {}) });
+export async function paint({ base, world, record, rpc, onState, notes, forget, started }) {
+  const job = started ?? (await rpc("nemesis.portrait", { world, id: record.id, ...(notes ? { notes } : {}), ...(forget ? { forget: true } : {}) })).job;
   onState?.("running");
   for (;;) {
     await new Promise((r) => setTimeout(r, 3000));

@@ -9,8 +9,11 @@ import { cardProblems, type Card } from "../src/card";
 import { castScene, knownNames, mainIndexes, placeName, protectedNames, rankOfKind, roleAt, roleKey } from "../src/cast";
 import type { ClaudeRunner, StructuredRequest } from "../src/claude";
 import { folkActorData, folkHp, folkProblems, pickFolk, writeCulture, type FolkCulture } from "../src/folk";
+import type { ArtRunner } from "../src/art";
+import { KEEPER_ART_SYSTEM } from "../src/keeper-art";
+import { PortraitQueue } from "../src/portraits";
 import { NemesisService } from "../src/service";
-import { writeSketch } from "../src/sketch";
+import { SKETCH_SYSTEM, writeSketch } from "../src/sketch";
 import { NemesisStore } from "../src/store";
 import { FOLK_TOKENS } from "../src/tokens";
 
@@ -352,5 +355,70 @@ describe("companion: cast and keepers", () => {
     expect(march.townsfolk).toEqual([{ town: { id: 119, name: "Narkoc" }, people: [expect.objectContaining({ id: p.id, post: { role: "alchemist", scene: "Alchemist" } })] }]);
     expect(march.people.some((x) => x.id === p.id)).toBe(false);
     expect(cardProblems(villagerCard(), kitFor("villager"))).toEqual([]);
+  });
+
+  it("paints a keeper from the sketch while the full card is written, and hands the portrait to them", async () => {
+    const { data, dir } = await world();
+    // Claude answers by task, since the picture description and the card are written at the same time.
+    const asked: StructuredRequest[] = [];
+    const claude: ClaudeRunner = {
+      structured: async (req) => {
+        asked.push(req);
+        if (req.system === SKETCH_SYSTEM) return structuredClone(SKETCH);
+        if (req.system === KEEPER_ART_SYSTEM) return { description: "A grey-scaled lizard alchemist with a long snout behind a counter of green vials." };
+        return villagerCard();
+      },
+    };
+    let release!: () => void;
+    const painted = new Promise<void>((r) => (release = r));
+    const out = await mkdtemp(join(tmpdir(), "artgen-out-"));
+    const drawn: string[] = [];
+    const art: ArtRunner = {
+      available: () => true,
+      portrait: async (req) => {
+        drawn.push(req.description);
+        await painted;
+        await writeFile(join(out, "f.png"), "FINAL");
+        await writeFile(join(out, "l.png"), "LAYOUT");
+        return { final: join(out, "f.png"), layout: join(out, "l.png") };
+      },
+    };
+    const portraits = new PortraitQueue({ art, worldDir: (w) => join(data, "worlds", w) });
+    const svc = new NemesisService(data, { claude, portraits, model: "opus", sketchModel: "sonnet" });
+    expect(await svc.call("nemesis.warmArt", {})).toEqual({ warming: false }); // no launcher here
+    const req = { world: "testland", town: 119, place: "city1:alchemist", role: "alchemist", n: 0, scene: "Alchemist", kind: "commoner", name: "Ixa Holvane", species: "lizardfolk" };
+    const { sketch } = (await svc.call("nemesis.sketch", req)) as any;
+    const [early, keeper] = (await Promise.all([svc.call("nemesis.keeperPortrait", { ...req, sketch }), svc.call("nemesis.keeper", { ...req, sketch })])) as any[];
+    const artAsk = asked.find((a) => a.system === KEEPER_ART_SYSTEM)!;
+    expect(artAsk.model).toBe("opus");
+    expect(artAsk.prompt).toContain(SKETCH.look.trim());
+    expect(artAsk.prompt).toContain("lizardfolk anatomy");
+    // The painter got the early description before the card was done; the card's own art prompt is not used.
+    expect(drawn).toEqual([early.description]);
+    expect(keeper.job).toBe(early.job);
+    expect(keeper.person.art.prompt).toBe(early.description);
+    expect((await NemesisStore.open(dir, "testland")).get("persons", keeper.person.id)!.art.prompt).toBe(early.description);
+    // Claimed while still painting: the images land in the person's folder.
+    expect(portraits.get(early.job)!.person).toBe(keeper.person.id);
+    release();
+    for (let i = 0; i < 100 && portraits.get(early.job)!.state !== "done"; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(portraits.get(early.job)).toMatchObject({ state: "done", files: { final: `art/${keeper.person.id}/final.png`, layout: `art/${keeper.person.id}/layout.png` } });
+    expect(existsSync(join(dir, "art", keeper.person.id, "layout.png"))).toBe(true);
+    // Written: no second portrait for them.
+    expect(await svc.call("nemesis.keeperPortrait", { ...req, sketch })).toEqual({ existing: true });
+    expect(await new NemesisService(data, { claude }).call("nemesis.keeperPortrait", { ...req, sketch })).toEqual({ unavailable: true });
+  });
+
+  it("moves a finished portrait to the person who claims it", async () => {
+    const data = await mkdtemp(join(tmpdir(), "nemesis-claim-"));
+    const out = await mkdtemp(join(tmpdir(), "artgen-out-"));
+    await writeFile(join(out, "f.png"), "FINAL");
+    const portraits = new PortraitQueue({ art: { available: () => true, portrait: async () => ({ final: join(out, "f.png") }) }, worldDir: (w) => join(data, w) });
+    const job = portraits.add("w", "pending-x", "a troll baker");
+    for (let i = 0; i < 100 && job.state !== "done"; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(job.files).toEqual({ final: "art/pending-x/final.png" });
+    await portraits.claim(job.id, "brok-the-baker");
+    expect(job.files).toEqual({ final: "art/brok-the-baker/final.png" });
+    expect([existsSync(join(data, "w", "art", "brok-the-baker", "final.png")), existsSync(join(data, "w", "art", "pending-x"))]).toEqual([true, false]);
   });
 });

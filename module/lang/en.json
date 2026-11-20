@@ -168,6 +168,7 @@
       "Busy": "Nemesis is still sketching {name}; the corner panel shows when you can read it.",
       "Sketching": "sketching the {role} of {town} (a few seconds)",
       "SketchReady": "sketch ready, click to read; writing the full card",
+      "SketchReadyPainting": "sketch ready, click to read; writing the full card while the portrait paints",
       "ReadSketch": "Read the quick sketch",
       "WritingUp": "writing the full card, keeping what the table knows (about a minute)",
       "Correcting": "reading your corrections (a few seconds), then painting"

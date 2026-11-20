@@ -15,6 +15,8 @@ import { generatePerson, loadSeedTables, writeUpPerson, type Rank } from "./gene
 import { writeSketch, type Sketch } from "./sketch";
 import type { PortraitQueue } from "./portraits";
 import { nextNotes, revisePortrait } from "./reroll";
+import { writeKeeperArt } from "./keeper-art";
+import { slug } from "./import";
 import { KINDS, RANKS, type Kind } from "./schema";
 import { NemesisStore, type NRecord } from "./store";
 import { speciesToken } from "./tokens";
@@ -49,9 +51,11 @@ export class NemesisService {
   /** Folk books being written, by world (one at a time per world). */
   private readonly folkWrites = new Map<string, Promise<FolkBook>>();
   /** Townsfolk being written, by world and place, so two looks at a scene write them once. */
-  private readonly keepers = new Map<string, Promise<{ person: NRecord; actor: unknown }>>();
+  private readonly keepers = new Map<string, Promise<{ person: NRecord; actor: unknown; job?: string }>>();
   /** Sketches of townsfolk whose full card is not written yet, by world and place. */
   private readonly sketches = new Map<string, Promise<Sketch>>();
+  /** Portraits of townsfolk painted while their full card is written, by world and place. */
+  private readonly keeperArt = new Map<string, Promise<{ job: string; description: string } | undefined>>();
 
   constructor(readonly dataDir: string, private readonly deps: ServiceDeps = {}) {}
 
@@ -306,12 +310,58 @@ export class NemesisService {
               model: this.deps.model,
             });
             this.sketches.delete(key);
-            return { person: g.person, actor: this.actorFor(p.world, g.person) };
+            // Their portrait, already being painted from the sketch: theirs now, from that description.
+            let person = g.person;
+            const early = await this.keeperArt.get(key)?.catch(() => undefined);
+            this.keeperArt.delete(key);
+            if (early && (await this.deps.portraits?.claim(early.job, person.id))) {
+              person = { ...person, art: { ...(person.art ?? {}), prompt: early.description } };
+              await store.put("persons", person);
+            }
+            return { person, actor: this.actorFor(p.world, person), ...(early ? { job: early.job } : {}) };
           })();
           this.keepers.set(key, job);
           job.finally(() => this.keepers.delete(key)).catch(() => undefined);
         }
         return { ...(await job), existing: false };
+      }
+      case "nemesis.warmArt":
+        // The GM opened a scene with someone to paint: the art server starts now, not after the card.
+        return { warming: !!this.deps.portraits?.available && this.deps.portraits.warmSoon() };
+      case "nemesis.keeperPortrait": {
+        // A scene's keeper, painted from the sketch while Claude writes the full card (nemesis.keeper
+        // then claims the portrait). Someone already written keeps theirs.
+        const q = this.deps.portraits;
+        if (!q?.available) return { unavailable: true };
+        const store = await this.store(p.world);
+        const { town, faction } = await this.placeOf(p.world, store, p);
+        const post = postOf(p, town.id);
+        if (!post.place || !post.role) throw new Error("place and role required");
+        if (personAt(store.list("persons"), post)) return { existing: true };
+        const sketch = p.sketch && typeof p.sketch === "object" && typeof p.sketch.look === "string" && p.sketch.look.trim() ? (p.sketch as Sketch) : undefined;
+        if (!sketch) throw new Error("the sketch is needed to paint them before their card");
+        if (!this.deps.claude) throw new Error("this companion cannot reach Claude, so it cannot describe the portrait");
+        const key = `${p.world}|${postKey(post)}`;
+        let job = this.keeperArt.get(key);
+        if (!job) {
+          const claude = this.deps.claude;
+          job = (async () => {
+            const lore = await this.lore(p.world);
+            const culture = cultureOf(faction, lore);
+            const book = await loadFolkBook(this.worldDir(p.world));
+            const species = String(p.species ?? "").slice(0, 120);
+            const description = await writeKeeperArt({
+              claude, model: this.deps.model,
+              input: { species, role: post.role, scene: post.scene, town: town.name, sketch, anatomy: culture ? book?.cultures[culture]?.species.find((s) => s.name === species)?.anatomy : undefined },
+            });
+            // A stand-in folder until the card is written and claims it.
+            return { job: q.add(p.world, `pending-${slug(postKey(post))}`, description).id, description };
+          })();
+          this.keeperArt.set(key, job);
+          job.catch(() => this.keeperArt.delete(key));
+        }
+        const out = await job;
+        return out ? { job: out.job, description: out.description } : { unavailable: true };
       }
       case "nemesis.generate": {
         if (!this.deps.claude) throw new Error("this companion cannot reach Claude, so it cannot write people");

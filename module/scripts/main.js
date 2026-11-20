@@ -183,6 +183,8 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     this.writing.add(id);
     this.render();
     const row = track({ title: card?.name ?? id, detail: t("Progress.WritingUp") });
+    // The art server starts now, so it is up when the card is written.
+    if (this.caps.portraits) rpc("nemesis.warmArt").catch(() => undefined);
     try {
       const { person, actor } = await rpc("nemesis.writeup", { world: this.world, id });
       let record = person;
@@ -252,6 +254,7 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     this.busy = true;
     this.setStatus(t("Writing", { rank: t(`Rank.${form.rank}`), faction: f.name }));
     const row = track({ title: t("Progress.NewPerson", { rank: t(`Rank.${form.rank}`), faction: f.name }), detail: t("Progress.WritingShort") });
+    if (this.caps.portraits) rpc("nemesis.warmArt").catch(() => undefined);
     try {
       const { person, actor } = await rpc("nemesis.generate", { world: this.world, faction: f.id, rank: form.rank, superior: form.superior || undefined, note: form.note?.trim() || undefined });
       this.setStatus(t("Making", { name: person.name }));
