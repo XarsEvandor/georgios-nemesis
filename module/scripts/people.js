@@ -4,7 +4,7 @@
  * portrait, painted in the background; both the repaint and the layout are kept and the GM picks.
  */
 
-import { artHtml, journalHtml, pickedArt } from "./board-html.js";
+import { artHtml, journalHtml, pickedArt, rerolledArt, swappedArt } from "./board-html.js";
 
 const MODULE_ID = "georgios-nemesis";
 const ROOT = "Georgios' Nemesis";
@@ -49,17 +49,19 @@ export function cardWorld(personId) {
 /**
  * Clicks on a card's portraits, wherever the card is open: the link shows that picture to the
  * players; the picture itself opens large for the GM; Reroll opens the reroll box (onReroll);
- * "Use on the actor" makes that picture the actor's (onPick).
+ * "Use on the actor" makes that picture the actor's (onPick); Undo/Redo swaps the last reroll (onUndo).
  */
-export function initCardArt({ onReroll, onPick } = {}) {
+export function initCardArt({ onReroll, onPick, onUndo } = {}) {
   document.addEventListener("click", (ev) => {
     const again = ev.target.closest?.(".gn-art .gn-reroll");
     const use = again ? null : ev.target.closest?.(".gn-art .gn-use-art");
-    if ((again || use) && game.user.isGM) {
+    const undo = again || use ? null : ev.target.closest?.(".gn-art .gn-undo-art");
+    if ((again || use || undo) && game.user.isGM) {
       ev.preventDefault();
       ev.stopPropagation();
       if (again) onReroll?.(again.dataset.person);
-      else onPick?.(use.dataset.person, use.dataset.which);
+      else if (use) onPick?.(use.dataset.person, use.dataset.which);
+      else onUndo?.(undo.dataset.person);
       return;
     }
     const link = ev.target.closest?.(".gn-card-art .gn-show-players");
@@ -217,12 +219,10 @@ export async function paint({ base, world, record, rpc, onState, notes, forget, 
     const images = {};
     if (st.files?.final) images.final = await bring(base, world, record.id, "final");
     if (st.files?.layout) images.layout = await bring(base, world, record.id, "layout");
-    // Onto the record as it is now: the companion may have written the corrections and the new
-    // description into its art meanwhile.
+    // Onto the record as it is now (the companion may have written the corrections and the new
+    // description into its art meanwhile), keeping the pair it replaces for undo.
     const fresh = await rpc("nemesis.get", { world, kind: "persons", id: record.id });
-    const art = { ...(fresh.art ?? {}), ...images };
-    art.picked = art.final ? "final" : "layout";
-    const next = { ...fresh, art };
+    const next = { ...fresh, art: rerolledArt(record.art, fresh.art, images) };
     await rpc("nemesis.put", { world, kind: "persons", record: next });
     await applyArt(next);
     return next;
@@ -286,6 +286,16 @@ export async function placeOnScene(actorUuid, t) {
   const doc = await actor.getTokenDocument({ x: at.x, y: at.y });
   await scene.createEmbeddedDocuments("Token", [doc.toObject()]);
   ui.notifications.info(t("Placed", { name: actor.name, scene: scene.name }));
+}
+
+/** Undoes (or redoes) a person's last reroll: the other pair goes back on the actor and in the card. */
+export async function swapArt({ world, personId, rpc }) {
+  const record = await rpc("nemesis.get", { world, kind: "persons", id: personId });
+  if (!record.art?.prev) return record;
+  const next = { ...record, art: swappedArt(record.art) };
+  await rpc("nemesis.put", { world, kind: "persons", record: next });
+  await applyArt(next);
+  return next;
 }
 
 /** The GM picks the repaint or the layout for a person. */

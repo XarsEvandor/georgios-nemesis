@@ -13,7 +13,7 @@
 import { OUTSIDE, esc, navHtml, paneHtml, pickedArt, pickWorld } from "./board-html.js";
 import { initCast } from "./cast.js";
 import { offerStart, startCompanion } from "./launcher.js";
-import { cardWorld, createInFoundry, initCardArt, openCard, paint, pick, placeOnScene, restoreSpeciesTokens } from "./people.js";
+import { cardWorld, createInFoundry, initCardArt, openCard, paint, pick, placeOnScene, restoreSpeciesTokens, swapArt } from "./people.js";
 import { initProgress, track } from "./progress.js";
 
 const MODULE_ID = "georgios-nemesis";
@@ -136,6 +136,19 @@ async function useOnActor(personId, which) {
   if (!world) return ui.notifications.warn(t("Reroll.NoWorld"));
   try {
     await pick({ world, personId, which, rpc });
+    if (board?.rendered) await board.load();
+  } catch (e) {
+    ui.notifications.error(e.message);
+  }
+}
+
+/** Undoes (or redoes) a person's last reroll, from their card. */
+async function undoReroll(personId) {
+  if (painting.has(personId)) return ui.notifications.info(t("Reroll.Busy", { name: personId }));
+  const world = cardWorld(personId) ?? board?.world;
+  if (!world) return ui.notifications.warn(t("Reroll.NoWorld"));
+  try {
+    await swapArt({ world, personId, rpc });
     if (board?.rendered) await board.load();
   } catch (e) {
     ui.notifications.error(e.message);
@@ -369,7 +382,7 @@ Hooks.once("init", () => {
   // The corner panel of what Nemesis is writing and painting.
   initProgress(t);
   // Portraits in a person's card: show one to the players, open it large, put it on the actor, or paint it again.
-  initCardArt({ onReroll: (personId) => reroll({ personId }), onPick: (personId, which) => useOnActor(personId, which) });
+  initCardArt({ onReroll: (personId) => reroll({ personId }), onPick: (personId, which) => useOnActor(personId, which), onUndo: (personId) => undoReroll(personId) });
   // Map Maker's townsfolk, recast when the GM opens one of its places (only when Map Maker is active).
   initCast({ rpc, t, base: companionBase, NotRunning });
 });

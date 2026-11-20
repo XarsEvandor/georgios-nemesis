@@ -201,6 +201,10 @@
       "OnActor": "(the actor's picture)",
       "Reroll": "Reroll",
       "RerollHint": "Paint new portraits, with your corrections if you write any",
+      "Undo": "Undo reroll",
+      "UndoHint": "Back to the portraits from before the last reroll (and the description and corrections they came from)",
+      "Redo": "Redo reroll",
+      "RedoHint": "Back to the portraits of the last reroll",
       "UseOnActor": "Use on the actor",
       "UseOnActorHint": "Make this picture the actor's (their sheet picture); the token keeps its species token"
     },

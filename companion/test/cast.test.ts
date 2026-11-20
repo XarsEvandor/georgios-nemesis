@@ -237,7 +237,31 @@ describe("sketch", () => {
     // Only the picture not on the actor offers to go there.
     expect(html.match(/class="gn-use-art" data-person="ixa" data-which="(\w+)"/g)).toEqual(['class="gn-use-art" data-person="ixa" data-which="final"']);
     expect(artHtml({ name: "Ixa" }, t)).toBe('<div class="gn-art"></div>');
+    expect(html).not.toContain("gn-undo-art");
     expect(journalHtml({ name: "Ixa", art: { final: "f.png" } }, t).startsWith('<div class="gn-art"><figure')).toBe(true);
+  });
+
+  it("keeps the replaced pair on a reroll, and undo and redo swap it back and forth", async () => {
+    // @ts-expect-error plain JS module without types
+    const { artHtml, rerolledArt, swappedArt } = await import("../../module/scripts/board-html.js");
+    const t = (k: string) => k;
+    const before = { final: "f1.png", layout: "l1.png", picked: "layout", prompt: "first", base: "first" };
+    // The companion wrote the correction into the art while it painted.
+    const now = { ...before, prompt: "rewritten", notes: ["older"] };
+    const art = rerolledArt(before, now, { final: "f2.png", layout: "l2.png" });
+    expect(art).toEqual({ final: "f2.png", layout: "l2.png", picked: "final", prompt: "rewritten", notes: ["older"], base: "first", prev: { final: "f1.png", layout: "l1.png", picked: "layout", prompt: "first", newer: false } });
+    expect(artHtml({ id: "ixa", name: "Ixa", art }, t)).toContain('class="gn-undo-art" data-person="ixa"');
+    expect(artHtml({ id: "ixa", name: "Ixa", art }, t)).toContain("Card.Undo<");
+    const undone = swappedArt(art);
+    expect(undone).toEqual({ final: "f1.png", layout: "l1.png", picked: "layout", prompt: "first", base: "first", prev: { final: "f2.png", layout: "l2.png", picked: "final", prompt: "rewritten", notes: ["older"], newer: true } });
+    expect(artHtml({ id: "ixa", name: "Ixa", art: undone }, t)).toContain("Card.Redo<");
+    expect(swappedArt(undone)).toEqual(art);
+    // A first portrait replaces nothing: no undo.
+    expect(rerolledArt({ prompt: "first" }, { prompt: "first" }, { final: "f.png", layout: "l.png" }).prev).toBeUndefined();
+    // The record keeps it.
+    const { data, s } = await world();
+    await s.put("persons", { id: "ixa", name: "Ixa", state: "alive", art: undone });
+    expect((await NemesisStore.open(join(data, "worlds", "testland"), "testland")).get("persons", "ixa")!.art.prev.newer).toBe(true);
   });
 });
 

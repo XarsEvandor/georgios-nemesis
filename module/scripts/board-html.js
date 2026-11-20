@@ -43,6 +43,29 @@ function placeHtml(key, ctx, label) {
   return j ? `<a class="gn-link gn-place" data-uuid="${esc(j.uuid)}" data-tooltip="${esc(ctx.t("OpenMapMaker"))}"><i class="fa-solid fa-map-location-dot"></i> ${esc(label ?? j.name)}</a>` : "";
 }
 
+/** What a reroll keeps of the pair it replaces (and an undo swaps back). */
+const PAIR = ["final", "layout", "picked", "prompt", "notes"];
+
+/**
+ * A person's art after a reroll: the new images on top, the pair they replace kept for undo.
+ * before: the art as it was before the reroll; now: the art as it is (the companion may have
+ * written the corrections into it); images: the new { final, layout }.
+ */
+export function rerolledArt(before, now, images) {
+  const art = { ...(now ?? {}), ...images, picked: images.final ? "final" : "layout" };
+  if (before?.final || before?.layout) art.prev = { ...Object.fromEntries(PAIR.filter((k) => before[k] !== undefined).map((k) => [k, before[k]])), newer: false };
+  return art;
+}
+
+/** Undo (or redo) a reroll: the kept pair and the shown pair change places. */
+export function swappedArt(art) {
+  if (!art?.prev) return art;
+  const shown = Object.fromEntries(PAIR.filter((k) => art[k] !== undefined).map((k) => [k, art[k]]));
+  const { newer, ...back } = art.prev;
+  const rest = Object.fromEntries(Object.entries(art).filter(([k]) => !PAIR.includes(k) && k !== "prev"));
+  return { ...rest, ...back, prev: { ...shown, newer: !newer } };
+}
+
 /** The portrait the GM picked (or the first there is). */
 export function pickedArt(art) {
   if (!art) return undefined;
@@ -181,9 +204,13 @@ export function artHtml(person, t) {
   const fig = (which) => (art[which]
     ? `<figure class="gn-card-art"><img src="${esc(art[which])}" alt="${esc(person.name)}"><figcaption>${esc(t(`Card.${which}`))}${picked === which ? ` <em>${esc(t("Card.OnActor"))}</em>` : ""}<br><a class="gn-show-players"><i class="fa-solid fa-eye"></i> ${esc(t("Card.ShowPlayers"))}</a>${picked === which ? "" : use(which)}</figcaption></figure>`
     : "");
-  // Painted portraits can be painted again, with the GM's corrections (the reroll box).
+  // Painted portraits can be painted again, with the GM's corrections (the reroll box), and the
+  // last reroll undone (and redone).
+  const undo = art.prev?.final || art.prev?.layout
+    ? ` <a class="gn-undo-art" data-person="${esc(person.id)}" data-tooltip="${esc(t(art.prev.newer ? "Card.RedoHint" : "Card.UndoHint"))}"><i class="fa-solid ${art.prev.newer ? "fa-rotate-right" : "fa-rotate-left"}"></i> ${esc(t(art.prev.newer ? "Card.Redo" : "Card.Undo"))}</a>`
+    : "";
   const reroll = art.final || art.layout
-    ? `<p class="gn-art-tools"><a class="gn-reroll" data-person="${esc(person.id)}" data-tooltip="${esc(t("Card.RerollHint"))}"><i class="fa-solid fa-dice"></i> ${esc(t("Card.Reroll"))}</a></p>`
+    ? `<p class="gn-art-tools"><a class="gn-reroll" data-person="${esc(person.id)}" data-tooltip="${esc(t("Card.RerollHint"))}"><i class="fa-solid fa-dice"></i> ${esc(t("Card.Reroll"))}</a>${undo}</p>`
     : "";
   return `<div class="gn-art">${fig("final")}${fig("layout")}${fig("own")}${reroll}</div>`;
 }

@@ -68,6 +68,18 @@ const ART: Schema = {
     /** The description the first portrait was painted from; rerolls rewrite it with the notes. */
     base: TEXT,
     notes: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 12, description: "the GM's corrections to the portrait, oldest first" },
+    /** The other pair from the last reroll, for undo (newer: it is the reroll, after an undo). */
+    prev: {
+      type: "object", additionalProperties: false,
+      properties: {
+        final: { type: "string", maxLength: 500 },
+        layout: { type: "string", maxLength: 500 },
+        picked: { enum: ["final", "layout", "own"] },
+        prompt: TEXT,
+        notes: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 12 },
+        newer: { type: "boolean" },
+      },
+    },
   },
 };
 const obj = (properties: Record<string, Schema>, required: string[] = []): Schema => ({ type: "object", additionalProperties: false, properties, required });
