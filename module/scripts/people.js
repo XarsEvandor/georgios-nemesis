@@ -41,12 +41,24 @@ async function showPlayers(src) {
   }
 }
 
+/** The world a person's card (GM journal) belongs to, from the journal's flags. */
+export function cardWorld(personId) {
+  return game.journal.find((j) => j.getFlag(MODULE_ID, "person") === personId)?.getFlag(MODULE_ID, "world");
+}
+
 /**
  * Clicks on a card's portraits, wherever the card is open: the link shows that picture to the
- * players; the picture itself opens large for the GM.
+ * players; the picture itself opens large for the GM; Reroll opens the reroll box (onReroll).
  */
-export function initCardArt() {
+export function initCardArt({ onReroll } = {}) {
   document.addEventListener("click", (ev) => {
+    const again = ev.target.closest?.(".gn-art .gn-reroll");
+    if (again && game.user.isGM) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onReroll?.(again.dataset.person);
+      return;
+    }
     const link = ev.target.closest?.(".gn-card-art .gn-show-players");
     const img = link ? null : ev.target.closest?.(".gn-card-art img");
     if ((!link && !img) || !game.user.isGM) return;
@@ -184,9 +196,11 @@ export async function dressTokens(record) {
 /**
  * Paints a person: starts the companion's job, waits for it, brings both images into Foundry,
  * records them (picked: the repaint, until the GM picks otherwise) and dresses the actor.
+ * notes: the GM's corrections for this reroll (the companion keeps them for later ones);
+ * forget: drop the earlier corrections.
  */
-export async function paint({ base, world, record, rpc, onState }) {
-  const { job } = await rpc("nemesis.portrait", { world, id: record.id });
+export async function paint({ base, world, record, rpc, onState, notes, forget }) {
+  const { job } = await rpc("nemesis.portrait", { world, id: record.id, ...(notes ? { notes } : {}), ...(forget ? { forget: true } : {}) });
   onState?.("running");
   for (;;) {
     await new Promise((r) => setTimeout(r, 3000));
@@ -196,11 +210,14 @@ export async function paint({ base, world, record, rpc, onState }) {
       onState?.(st.state, st.last);
       continue;
     }
-    const art = { ...(record.art ?? {}) };
-    if (st.files?.final) art.final = await bring(base, world, record.id, "final");
-    if (st.files?.layout) art.layout = await bring(base, world, record.id, "layout");
-    art.picked = art.final ? "final" : "layout";
+    const images = {};
+    if (st.files?.final) images.final = await bring(base, world, record.id, "final");
+    if (st.files?.layout) images.layout = await bring(base, world, record.id, "layout");
+    // Onto the record as it is now: the companion may have written the corrections and the new
+    // description into its art meanwhile.
     const fresh = await rpc("nemesis.get", { world, kind: "persons", id: record.id });
+    const art = { ...(fresh.art ?? {}), ...images };
+    art.picked = art.final ? "final" : "layout";
     const next = { ...fresh, art };
     await rpc("nemesis.put", { world, kind: "persons", record: next });
     await applyArt(next);

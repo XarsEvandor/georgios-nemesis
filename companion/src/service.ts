@@ -14,6 +14,7 @@ import { cultureOf, folkActorData, loadFolkBook, saveFolkBook, writeCulture, typ
 import { generatePerson, loadSeedTables, writeUpPerson, type Rank } from "./generate";
 import { writeSketch, type Sketch } from "./sketch";
 import type { PortraitQueue } from "./portraits";
+import { nextNotes, revisePortrait } from "./reroll";
 import { KINDS, RANKS, type Kind } from "./schema";
 import { NemesisStore, type NRecord } from "./store";
 import { speciesToken } from "./tokens";
@@ -333,8 +334,25 @@ export class NemesisService {
       case "nemesis.portrait": {
         const q = this.deps.portraits;
         if (!q?.available) throw new Error("artgen is not installed beside this companion, so it cannot paint portraits");
-        const person = (await this.store(p.world)).get("persons", String(p.id));
+        const store = await this.store(p.world);
+        let person = store.get("persons", String(p.id));
         if (!person) throw new Error(`no person "${p.id}"`);
+        // A reroll with corrections (notes), or one that drops the earlier corrections (forget).
+        const forget = p.forget === true;
+        if ((typeof p.notes === "string" && p.notes.trim()) || forget) {
+          const art = { ...(person.art ?? {}) };
+          const base = art.base ?? art.prompt ?? person.look;
+          if (!base) throw new Error(`${person.name} has no portrait prompt or look`);
+          const notes = nextNotes(art.notes, p.notes, forget);
+          let prompt = base;
+          if (notes.length) {
+            const claude = this.deps.claude;
+            if (!claude) throw new Error("this companion cannot reach Claude, so it cannot read the corrections");
+            prompt = await revisePortrait({ claude, model: this.deps.sketchModel ?? "sonnet", input: { base, species: person.species, look: person.look, notes } });
+          }
+          person = { ...person, art: { ...art, base, notes, prompt } };
+          await store.put("persons", person);
+        }
         const prompt = person.art?.prompt ?? person.look;
         if (!prompt) throw new Error(`${person.name} has no portrait prompt or look`);
         const job = q.add(p.world, person.id, prompt, p.seed === undefined ? undefined : Number(p.seed));

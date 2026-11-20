@@ -169,7 +169,19 @@
       "Sketching": "sketching the {role} of {town} (a few seconds)",
       "SketchReady": "sketch ready, click to read; writing the full card",
       "ReadSketch": "Read the quick sketch",
-      "WritingUp": "writing the full card, keeping what the table knows (about a minute)"
+      "WritingUp": "writing the full card, keeping what the table knows (about a minute)",
+      "Correcting": "reading your corrections (a few seconds), then painting"
+    },
+    "Reroll": {
+      "Title": "Paint {name} again",
+      "Notes": "Corrections for the next portraits",
+      "NotesHint": "e.g. the face must stay a lizard's, older, a darker coat, holding a vial instead of a book",
+      "Empty": "Leave it empty for new pictures from the same description.",
+      "Earlier": "Earlier corrections, still applied:",
+      "Forget": "Forget the earlier corrections",
+      "Go": "Paint again",
+      "Busy": "Nemesis is already painting {name}; the corner panel shows when it is done.",
+      "NoWorld": "Nemesis: cannot tell which world this card belongs to. Open it from the Nemesis board."
     },
     "Sketch": {
       "Look": "Looks",
@@ -185,7 +197,9 @@
       "ShowPlayers": "Show players",
       "PortraitTitle": "Portrait",
       "Shown": "Nemesis: the portrait is on your players' screens (the picture only).",
-      "OnActor": "(the actor's picture)"
+      "OnActor": "(the actor's picture)",
+      "Reroll": "Reroll",
+      "RerollHint": "Paint new portraits, with your corrections if you write any"
     },
     "WriteUp": "Write up",
     "WriteUpHint": "Claude writes their full card (stat block, magic, notes, voice) keeping everything the table established; then their actor, card and portrait.",

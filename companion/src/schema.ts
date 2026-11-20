@@ -65,6 +65,9 @@ const ART: Schema = {
     own: { type: "string", maxLength: 500, description: "an image the GM supplied" },
     token: { type: "string", maxLength: 500 },
     prompt: TEXT,
+    /** The description the first portrait was painted from; rerolls rewrite it with the notes. */
+    base: TEXT,
+    notes: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 12, description: "the GM's corrections to the portrait, oldest first" },
   },
 };
 const obj = (properties: Record<string, Schema>, required: string[] = []): Schema => ({ type: "object", additionalProperties: false, properties, required });

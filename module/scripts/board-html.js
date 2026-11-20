@@ -179,7 +179,11 @@ export function artHtml(person, t) {
   const fig = (which) => (art[which]
     ? `<figure class="gn-card-art"><img src="${esc(art[which])}" alt="${esc(person.name)}"><figcaption>${esc(t(`Card.${which}`))}${picked === which ? ` <em>${esc(t("Card.OnActor"))}</em>` : ""}<br><a class="gn-show-players"><i class="fa-solid fa-eye"></i> ${esc(t("Card.ShowPlayers"))}</a></figcaption></figure>`
     : "");
-  return `<div class="gn-art">${fig("final")}${fig("layout")}${fig("own")}</div>`;
+  // Painted portraits can be painted again, with the GM's corrections (the reroll box).
+  const reroll = art.final || art.layout
+    ? `<p class="gn-art-tools"><a class="gn-reroll" data-person="${esc(person.id)}" data-tooltip="${esc(t("Card.RerollHint"))}"><i class="fa-solid fa-dice"></i> ${esc(t("Card.Reroll"))}</a></p>`
+    : "";
+  return `<div class="gn-art">${fig("final")}${fig("layout")}${fig("own")}${reroll}</div>`;
 }
 
 /** The GM journal page for a person record (the companion's record, not the board card). */

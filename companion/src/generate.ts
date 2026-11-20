@@ -15,6 +15,12 @@ import type { ClaudeRunner } from "./claude";
 import { slug } from "./import";
 import type { RANKS } from "./schema";
 import type { NemesisStore, NRecord } from "./store";
+
+/** A copy of an object without one key. */
+function withoutKey<T extends Record<string, unknown>>(o: T, key: string): Partial<T> {
+  const { [key]: _drop, ...rest } = o;
+  return rest as Partial<T>;
+}
 import type { Atlas, WorldLore } from "./world";
 
 export type Rank = Exclude<(typeof RANKS)[number], "unranked">;
@@ -320,7 +326,8 @@ export async function writeUpPerson(o: { store: NemesisStore; claude: ClaudeRunn
       personality: rec.personality ?? card.personality, combatStyle: rec.combatStyle ?? card.combatStyle,
       strength: rec.strength ?? card.strength, weakness: rec.weakness ?? card.weakness,
       notes: card.notes,
-      art: { ...(rec.art ?? {}), prompt: card.art },
+      // A new description: rerolls start again from it (the GM's corrections still apply).
+      art: { ...withoutKey(rec.art ?? {}, "base"), prompt: card.art },
       origin: { ...(rec.origin ?? {}), ...(o.note ? { note: o.note } : {}), ...(o.model ? { model: o.model } : {}) },
     };
     if (!last.length) last = store.check("persons", person);

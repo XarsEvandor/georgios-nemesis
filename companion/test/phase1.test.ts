@@ -9,6 +9,7 @@ import { cardProblems, type Card } from "../src/card";
 import type { ClaudeRunner, StructuredRequest } from "../src/claude";
 import { buildPrompt, generatePerson, rng, rollTables } from "../src/generate";
 import { PortraitQueue } from "../src/portraits";
+import { nextNotes, REVISE_SYSTEM, revisePrompt } from "../src/reroll";
 import { NemesisServer } from "../src/server";
 import { NemesisStore } from "../src/store";
 import { speciesToken } from "../src/tokens";
@@ -228,6 +229,75 @@ describe("tokens and portraits", () => {
       expect((await fetch(`http://127.0.0.1:${server.port}/art/testland/nobody/final.png`)).status).toBe(404);
       const actor = (await rpc("nemesis.actor", { world: "testland", id: "vorga-ironhorn" })).result;
       expect(actor.prototypeToken.texture.src).toBe("systems/dnd5e/tokens/monstrosity/Minotaur.webp");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("keeps the GM's corrections apart from the first description and paints from Claude's rewrite of both", () => {
+    expect(nextNotes(["  older,   greyer "], "a lizard's face", false)).toEqual(["older, greyer", "a lizard's face"]);
+    expect(nextNotes(["older"], "", true)).toEqual([]);
+    expect(nextNotes(undefined, "x".repeat(900), false)[0]).toHaveLength(500);
+    expect(nextNotes(Array.from({ length: 12 }, (_, i) => `n${i}`), "new", false)).toEqual([...Array.from({ length: 11 }, (_, i) => `n${i + 1}`), "new"]);
+    const p = revisePrompt({ base: "A broad minotaur on a quay.", species: "minotaur", notes: ["older", "no human face"] });
+    expect(p).toContain("A broad minotaur on a quay.");
+    expect(p).toContain("1. older\n2. no human face");
+    expect(REVISE_SYSTEM).toMatch(/cannot follow "no", "not" or "without"/);
+  });
+
+  it("rerolls a portrait: Claude rewrites the first description with every correction, the painter gets the rewrite", async () => {
+    const { data, s, atlas } = await world();
+    await generatePerson({ store: s, claude: new FakeClaude([card()]), atlas, req: { faction: "march", rank: "captain" } });
+    const first = s.get("persons", "vorga-ironhorn")!.art.prompt;
+    const painted: string[] = [];
+    const art: ArtRunner = {
+      available: () => true,
+      portrait: async (req) => {
+        painted.push(req.description);
+        return {};
+      },
+    };
+    const asked: StructuredRequest[] = [];
+    const claude: ClaudeRunner = {
+      structured: async (req) => {
+        asked.push(req);
+        return { description: `rewrite ${asked.length}` };
+      },
+    };
+    const portraits = new PortraitQueue({ art, worldDir: (w) => join(data, "worlds", w) });
+    const server = new NemesisServer({ dataDir: data, port: 0, deps: { portraits, claude, sketchModel: "sonnet" } });
+    await server.start();
+    const rpc = async (method: string, params: unknown) => (await (await fetch(`http://127.0.0.1:${server.port}/rpc`, { method: "POST", body: JSON.stringify({ id: 1, method, params }) })).json()) as any;
+    const settle = async (job: string) => {
+      for (let i = 0; i < 50; i++) {
+        const st = (await rpc("nemesis.job", { id: job })).result;
+        if (st.state !== "queued" && st.state !== "running") return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
+    const rec = async () => (await rpc("nemesis.get", { world: "testland", kind: "persons", id: "vorga-ironhorn" })).result;
+    try {
+      // A plain repaint: same description, no Claude.
+      await settle((await rpc("nemesis.portrait", { world: "testland", id: "vorga-ironhorn" })).result.job);
+      expect([painted.at(-1), asked.length]).toEqual([first, 0]);
+
+      await settle((await rpc("nemesis.portrait", { world: "testland", id: "vorga-ironhorn", notes: "older, grey around the horns" })).result.job);
+      expect(asked[0]).toMatchObject({ model: "sonnet", system: REVISE_SYSTEM });
+      expect(asked[0]!.prompt).toContain(first);
+      expect(painted.at(-1)).toBe("rewrite 1");
+      expect((await rec()).art).toMatchObject({ base: first, notes: ["older, grey around the horns"], prompt: "rewrite 1" });
+
+      // The next correction is rewritten from the first description again, with both corrections.
+      await settle((await rpc("nemesis.portrait", { world: "testland", id: "vorga-ironhorn", notes: "a darker coat" })).result.job);
+      expect(asked[1]!.prompt).toContain(first);
+      expect(asked[1]!.prompt).not.toContain("rewrite 1");
+      expect(asked[1]!.prompt).toContain("1. older, grey around the horns\n2. a darker coat");
+      expect((await rec()).art).toMatchObject({ notes: ["older, grey around the horns", "a darker coat"], prompt: "rewrite 2" });
+
+      // Forgetting them all paints from the first description again.
+      await settle((await rpc("nemesis.portrait", { world: "testland", id: "vorga-ironhorn", forget: true })).result.job);
+      expect([painted.at(-1), asked.length]).toEqual([first, 2]);
+      expect((await rec()).art).toMatchObject({ base: first, notes: [], prompt: first });
     } finally {
       await server.stop();
     }

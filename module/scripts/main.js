@@ -13,7 +13,7 @@
 import { OUTSIDE, esc, navHtml, paneHtml, pickedArt, pickWorld } from "./board-html.js";
 import { initCast } from "./cast.js";
 import { offerStart, startCompanion } from "./launcher.js";
-import { createInFoundry, initCardArt, openCard, paint, pick, placeOnScene, restoreSpeciesTokens } from "./people.js";
+import { cardWorld, createInFoundry, initCardArt, openCard, paint, pick, placeOnScene, restoreSpeciesTokens } from "./people.js";
 import { initProgress, track } from "./progress.js";
 
 const MODULE_ID = "georgios-nemesis";
@@ -71,6 +71,65 @@ function mapMakerIndex(world) {
   return index;
 }
 
+/** People being painted now (ids), whether the board or a card asked for it. */
+const painting = new Set();
+
+/**
+ * Paints a person, again with the GM's corrections when there are any. The corner panel row (a
+ * new one, or the one that wrote them) opens their card meanwhile.
+ */
+async function paintPerson({ world, record, row, notes, forget }) {
+  if (painting.has(record.id)) return ui.notifications.info(t("Reroll.Busy", { name: record.name }));
+  painting.add(record.id);
+  if (board?.rendered) board.render();
+  row ??= track({ title: record.name, detail: t("Progress.Painting") });
+  const card = record.links?.journal;
+  row.ready(card, t(notes ? "Progress.Correcting" : "Progress.Painting"));
+  try {
+    await paint({ base: companionBase(), world, record, rpc, notes, forget, onState: (state) => state === "running" && notes && row.ready(card, t("Progress.Painting")) });
+    row.done({ detail: t("Progress.Done") });
+  } catch (e) {
+    row.fail(e.message);
+    ui.notifications.error(`${t("PaintFailed", { name: record.name })}: ${e.message}`);
+  } finally {
+    painting.delete(record.id);
+    if (board?.rendered) await board.load();
+  }
+}
+
+/** The reroll box: corrections for the next portraits, with the earlier ones (which still apply). */
+async function reroll({ world, personId }) {
+  world ??= cardWorld(personId) ?? board?.world;
+  if (!world) return ui.notifications.warn(t("Reroll.NoWorld"));
+  let record;
+  try {
+    record = await rpc("nemesis.get", { world, kind: "persons", id: personId });
+  } catch (e) {
+    return ui.notifications.error(e.message);
+  }
+  if (painting.has(record.id)) return ui.notifications.info(t("Reroll.Busy", { name: record.name }));
+  const earlier = record.art?.notes ?? [];
+  const form = await foundry.applications.api.DialogV2.prompt({
+    window: { title: t("Reroll.Title", { name: record.name }) },
+    content: `<div class="gn-form gn-reroll-form">
+      <label>${esc(t("Reroll.Notes"))} <textarea name="notes" rows="4" maxlength="500" placeholder="${esc(t("Reroll.NotesHint"))}"></textarea></label>
+      <p class="gn-hint">${esc(t("Reroll.Empty"))}</p>
+      ${earlier.length ? `<p class="gn-hint">${esc(t("Reroll.Earlier"))}</p><ol class="gn-earlier">${earlier.map((n) => `<li>${esc(n)}</li>`).join("")}</ol>
+      <label class="gn-check"><input type="checkbox" name="forget"> ${esc(t("Reroll.Forget"))}</label>` : ""}
+    </div>`,
+    ok: {
+      label: t("Reroll.Go"), icon: "fa-solid fa-dice",
+      callback: (_e, button) => {
+        const f = new FormData(button.form);
+        return { notes: String(f.get("notes") ?? "").trim(), forget: f.get("forget") === "on" };
+      },
+    },
+    rejectClose: false,
+  });
+  if (!form) return;
+  await paintPerson({ world, record, notes: form.notes || undefined, forget: form.forget });
+}
+
 /** Everyone in a faction's court and chain, for the "answers to" choice. */
 function leaders(f) {
   const out = [f.ruler, ...f.archmages].filter(Boolean);
@@ -97,7 +156,6 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     this.loading = true;
     this.status = null;
     this.busy = false;
-    this.painting = new Set();
     /** People being written up now (ids). */
     this.writing = new Set();
     this.load();
@@ -213,22 +271,8 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
   }
 
   /** Paints a person; the corner panel row (new or the one Generate made) opens their card meanwhile. */
-  async paint(record, row) {
-    if (this.painting.has(record.id)) return;
-    this.painting.add(record.id);
-    this.render();
-    row ??= track({ title: record.name, detail: t("Progress.Painting") });
-    row.ready(record.links?.journal, t("Progress.Painting"));
-    try {
-      await paint({ base: companionBase(), world: this.world, record, rpc });
-      row.done({ detail: t("Progress.Done") });
-    } catch (e) {
-      row.fail(e.message);
-      ui.notifications.error(`${t("PaintFailed", { name: record.name })}: ${e.message}`);
-    } finally {
-      this.painting.delete(record.id);
-      await this.load();
-    }
+  paint(record, row) {
+    return paintPerson({ world: this.world, record, row });
   }
 
   async _renderHTML() {
@@ -242,7 +286,7 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     const places = mapMakerIndex(this.board.world.mapMaker?.world);
     const ctx = {
       t, resolve: (name) => scribbler.get(String(name).trim().toLowerCase()), place: (key) => places.get(key),
-      canGenerate: this.caps.generate, canPaint: this.caps.portraits, busy: this.busy, painting: this.painting, writing: this.writing,
+      canGenerate: this.caps.generate, canPaint: this.caps.portraits, busy: this.busy, painting, writing: this.writing,
     };
     return `<section class="gn-board">
       <div class="gn-side">
@@ -280,7 +324,9 @@ class NemesisBoard extends foundry.applications.api.ApplicationV2 {
     content.querySelectorAll("[data-place-actor]").forEach((el) => el.addEventListener("click", () => placeOnScene(el.dataset.placeActor, t).catch((e) => ui.notifications.error(e.message))));
     content.querySelectorAll("[data-paint]").forEach((el) => el.addEventListener("click", async () => {
       const record = await rpc("nemesis.get", { world: this.world, kind: "persons", id: el.dataset.paint });
-      this.paint(record);
+      // Painted before: the reroll box, for corrections. Never painted: straight to the painter.
+      if (record.art?.final || record.art?.layout) reroll({ world: this.world, personId: record.id });
+      else this.paint(record);
     }));
     content.querySelectorAll("[data-pick]").forEach((el) => el.addEventListener("click", async () => {
       await pick({ world: this.world, personId: el.dataset.person, which: el.dataset.pick, rpc });
@@ -307,8 +353,8 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, "tokenLook", { scope: "world", config: false, type: Number, default: 1 });
   // The corner panel of what Nemesis is writing and painting.
   initProgress(t);
-  // Portraits in a person's card: show one to the players, or open it large.
-  initCardArt();
+  // Portraits in a person's card: show one to the players, open it large, or paint it again.
+  initCardArt({ onReroll: (personId) => reroll({ personId }) });
   // Map Maker's townsfolk, recast when the GM opens one of its places (only when Map Maker is active).
   initCast({ rpc, t, base: companionBase, NotRunning });
 });

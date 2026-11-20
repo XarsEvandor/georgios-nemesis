@@ -222,8 +222,11 @@ describe("sketch", () => {
     // @ts-expect-error plain JS module without types
     const { artHtml, journalHtml } = await import("../../module/scripts/board-html.js");
     const t = (k: string) => k;
-    const html = artHtml({ name: "Ixa", art: { final: "f.png", layout: "l.png", picked: "layout" } }, t);
+    const html = artHtml({ id: "ixa", name: "Ixa", art: { final: "f.png", layout: "l.png", picked: "layout" } }, t);
     expect(html.match(/<figure class="gn-card-art">/g)).toHaveLength(2);
+    // One reroll link per card, once there is something painted to reroll.
+    expect(html.match(/class="gn-reroll" data-person="ixa"/g)).toHaveLength(1);
+    expect(artHtml({ id: "ixa", name: "Ixa", art: { own: "o.png" } }, t)).not.toContain("gn-reroll");
     expect(html).toContain('<img src="f.png"');
     expect(html).toMatch(/Card\.layout <em>Card\.OnActor<\/em>/);
     expect(html).not.toMatch(/Card\.final <em>/);
