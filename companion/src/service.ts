@@ -264,7 +264,7 @@ export class NemesisService {
             const book = await loadFolkBook(this.worldDir(p.world));
             const species = String(p.species ?? "").slice(0, 120);
             return writeSketch({
-              claude, model: this.deps.sketchModel ?? "sonnet",
+              claude, model: this.deps.sketchModel ?? "opus",
               input: {
                 name: String(p.name ?? "").slice(0, 120), species, role: post.role, scene: post.scene, town: town.name, faction: faction?.name,
                 anatomy: culture ? book?.cultures[culture]?.species.find((s) => s.name === species)?.anatomy : undefined,
@@ -398,7 +398,7 @@ export class NemesisService {
           if (notes.length) {
             const claude = this.deps.claude;
             if (!claude) throw new Error("this companion cannot reach Claude, so it cannot read the corrections");
-            prompt = await revisePortrait({ claude, model: this.deps.sketchModel ?? "sonnet", input: { base, species: person.species, look: person.look, notes } });
+            prompt = await revisePortrait({ claude, model: this.deps.sketchModel ?? "opus", input: { base, species: person.species, look: person.look, notes } });
           }
           person = { ...person, art: { ...art, base, notes, prompt } };
           await store.put("persons", person);

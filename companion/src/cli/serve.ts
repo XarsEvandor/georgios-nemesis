@@ -1,7 +1,8 @@
 /**
  * Start the Nemesis companion:  npm run serve
  * Env: NEMESIS_DATA (the data folder, default <repo>/data), NEMESIS_PORT (47120), NEMESIS_MODEL (opus),
- * NEMESIS_SKETCH_MODEL (sonnet: the quick sketch of a person the GM introduces while the card is written),
+ * NEMESIS_SKETCH_MODEL (opus: the quick sketch of a person the GM introduces while the card is written, about
+ * 8 s; sonnet is about 6 s; also rewrites a portrait's description with the GM's corrections),
  * NEMESIS_ARTGEN (the artgen folder, default ../artgen), NEMESIS_CLAUDE (the claude executable).
  * <data>/config.json may set "port", "origins" (the Foundry addresses allowed to call it), "model", "sketchModel",
  * "artgen" and "launcher".
@@ -34,7 +35,7 @@ const server = new NemesisServer({
     claude: new ClaudeCli({ model: process.env.NEMESIS_MODEL ?? cfg.model ?? "opus" }),
     portraits: new PortraitQueue({ art, worldDir: (w) => join(data, "worlds", w), launcher: cfg.launcher ?? "http://127.0.0.1:47100" }),
     model: process.env.NEMESIS_MODEL ?? cfg.model ?? "opus",
-    sketchModel: process.env.NEMESIS_SKETCH_MODEL ?? cfg.sketchModel ?? "sonnet",
+    sketchModel: process.env.NEMESIS_SKETCH_MODEL ?? cfg.sketchModel ?? "opus",
   },
 });
 console.log(art.available() ? `Portraits: artgen in ${art.dir}` : `Portraits off: no artgen in ${art.dir} (set NEMESIS_ARTGEN or "artgen" in data/config.json)`);
