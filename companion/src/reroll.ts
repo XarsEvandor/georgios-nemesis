@@ -6,6 +6,7 @@
  */
 
 import type { ClaudeRunner } from "./claude";
+import { bodyLine, type Body } from "./folk";
 
 /** How many corrections a person keeps (the oldest go first), and how long each may be. */
 export const MAX_NOTES = 12;
@@ -26,6 +27,8 @@ export interface ReviseInput {
   /** The description Nemesis first painted from. */
   base: string;
   species?: string;
+  /** Their form, once the folk book has biology: the rewrite keeps it. */
+  body?: Body;
   look?: string;
   /** The GM's corrections, oldest first. */
   notes: string[];
@@ -34,7 +37,7 @@ export interface ReviseInput {
 export function revisePrompt(i: ReviseInput): string {
   return [
     `The description the painter worked from:\n${i.base}`,
-    i.species ? `Species: ${i.species}.` : "",
+    i.body ? `Their body (keep it unless a correction changes it): ${bodyLine(i.body)}.` : i.species ? `Species: ${i.species}.` : "",
     i.look ? `How the person looks, from their card: ${i.look}` : "",
     `The Game Master's corrections, oldest first:\n${i.notes.map((n, k) => `${k + 1}. ${n}`).join("\n")}`,
   ].filter(Boolean).join("\n\n");

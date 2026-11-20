@@ -11,7 +11,7 @@
  */
 
 import type { Rank } from "./balance";
-import { folkActorKey, pickFolk, type FolkCulture, type FolkPick } from "./folk";
+import { folkActorKey, formOf, pickFolk, type FolkCulture, type FolkPick } from "./folk";
 import type { NRecord } from "./store";
 
 /** What Map Maker calls the people who keep a place (its trades' keepers and the heads of a house). */
@@ -138,15 +138,19 @@ export function knownNames(persons: NRecord[], extra: string[] = []): Set<string
 function distinct(c: FolkCulture, pick: FolkPick, usedLooks: Set<string>, usedNames: Set<string>): FolkPick {
   const sp = c.species.find((s) => s.name === pick.species);
   const out = { ...pick };
+  // Within their form, once the folk book has biology: a cow stays a cow when her look or name is taken.
+  const form = formOf(sp, { sex: pick.sex });
+  const looks = form?.looks.length ? form.looks : sp?.looks ?? [];
+  const names = form?.given.length ? form.given : sp?.given ?? [];
   if (sp && usedLooks.has(out.look)) {
-    const at = sp.looks.indexOf(out.look);
-    const free = sp.looks.map((_, k) => sp.looks[(at + 1 + k) % sp.looks.length]!).find((l) => !usedLooks.has(l));
+    const at = looks.indexOf(out.look);
+    const free = looks.map((_, k) => looks[(at + 1 + k) % looks.length]!).find((l) => !usedLooks.has(l));
     if (free) out.look = free;
   }
   if (sp && usedNames.has(out.name)) {
     const [given, ...rest] = out.name.split(" ");
-    const at = sp.given.indexOf(given!);
-    const free = sp.given.map((_, k) => sp.given[(at + 1 + k) % sp.given.length]!).map((g) => [g, ...rest].join(" ")).find((nm) => !usedNames.has(nm));
+    const at = names.indexOf(given!);
+    const free = names.map((_, k) => names[(at + 1 + k) % names.length]!).map((g) => [g, ...rest].join(" ")).find((nm) => !usedNames.has(nm));
     if (free) out.name = free;
   }
   usedLooks.add(out.look);

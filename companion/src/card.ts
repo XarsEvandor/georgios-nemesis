@@ -19,6 +19,8 @@ export interface Card {
   name: string;
   aliases?: string[];
   species: string;
+  /** One of the forms their species has (from the folk book's biology). */
+  sex?: "female" | "male" | "none";
   look: string;
   role: string;
   personality: string;
@@ -54,11 +56,12 @@ const strs = (description: string) => ({ type: "array", items: { type: "string" 
 export const CARD_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["name", "species", "look", "role", "personality", "wants", "fears", "beliefs", "worldview", "toughness", "spheres", "tricks", "attacks", "powers", "resistances", "combatStyle", "strength", "weakness", "art", "notes"],
+  required: ["name", "species", "sex", "look", "role", "personality", "wants", "fears", "beliefs", "worldview", "toughness", "spheres", "tricks", "attacks", "powers", "resistances", "combatStyle", "strength", "weakness", "art", "notes"],
   properties: {
     name: str("Personal name, in the style of the faction's culture; a title may follow"),
     aliases: strs("Other names people use: epithets, titles, nicknames"),
     species: str("The creature kind, chosen from the culture's folk (humans only rarely); a few words"),
+    sex: { type: "string", enum: ["female", "male", "none"], description: "One of the forms their species has (the myths hold: harpies, dryads and hags are female, satyrs male; made things are none). Look and art follow that form's body" },
     look: str("Two to four sentences: anatomy spelled out (horns, scales, tail, hide, eyes, height), build, face, clothes or armour, scars, what they carry"),
     role: str("Their post in the faction, concrete: what they command or guard, and where"),
     personality: str("Two sentences: temper and manner"),

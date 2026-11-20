@@ -8,7 +8,10 @@ import { buildBoard } from "../src/board";
 import { cardProblems, type Card } from "../src/card";
 import { castScene, knownNames, mainIndexes, placeName, protectedNames, rankOfKind, roleAt, roleKey } from "../src/cast";
 import type { ClaudeRunner, StructuredRequest } from "../src/claude";
-import { folkActorData, folkHp, folkProblems, pickFolk, writeCulture, type FolkCulture } from "../src/folk";
+import { biologyProblems, bodyLine, bodyOf, folkActorData, folkHp, folkProblems, mythSex, pickFolk, writeBiology, writeCulture, type FolkCulture } from "../src/folk";
+import { bodyProblems, folkBodies, generatePerson } from "../src/generate";
+import { bodyTexts, reshapePerson } from "../src/reshape";
+import { sketchPrompt } from "../src/sketch";
 import type { ArtRunner } from "../src/art";
 import { KEEPER_ART_SYSTEM } from "../src/keeper-art";
 import { PortraitQueue } from "../src/portraits";
@@ -71,6 +74,22 @@ async function world(o: { folk?: boolean } = {}) {
   await writeFile(join(dir, "lore.json"), JSON.stringify({ cultures: { Yotunn: { way: "the hard country", folk: ["minotaurs", "lizardfolk", "trolls"] } }, humans: "Humans are rare." }));
   if (o.folk !== false) await writeFile(join(dir, "folk.json"), JSON.stringify({ cultures: { Yotunn: YOTUNN } }));
   return { data, dir, s };
+}
+
+/** A biology answer for a culture: the first half of each namebook female, the rest male (myth kinds: one form). */
+function bioOf(c: FolkCulture) {
+  return {
+    species: c.species.map((s) => {
+      const myth = mythSex(s.name);
+      const half = Math.ceil(s.given.length / 2);
+      const form = (sex: string, given: string[]) => ({ sex, called: s.name === "minotaur" && sex === "female" ? "minotaur cow" : s.name, anatomy: `${sex} ${s.name} body`, given, looks: [1, 2, 3, 4, 5].map((n) => `${sex} ${s.name} look ${n}`) });
+      return {
+        name: s.name,
+        forms: myth ? [form(myth, s.given)] : [form("female", s.given.slice(0, half)), form("male", s.given.slice(half))],
+        origin: "born to two parents", lifespan: "grown at 16, old at 60", limits: `${s.name} limits`,
+      };
+    }),
+  };
 }
 
 const SHOP = [
@@ -347,12 +366,15 @@ describe("companion: cast and keepers", () => {
 
   it("writes a missing culture's folk with Claude once, then reuses it", async () => {
     const { data } = await world({ folk: false });
-    const claude = new FakeClaude([YOTUNN]);
+    // The folk, then their biology.
+    const claude = new FakeClaude([YOTUNN, bioOf(YOTUNN)]);
     const svc = new NemesisService(data, { claude });
     await svc.call("nemesis.cast", { world: "testland", town: 119, place: "p", scene: "s", people: SHOP });
     await svc.call("nemesis.cast", { world: "testland", town: 119, place: "p", scene: "s", people: SHOP });
-    expect(claude.calls).toHaveLength(1);
-    expect(((await svc.call("nemesis.folk", { world: "testland" })) as any).cultures.Yotunn.map((s: any) => s.name)).toEqual(["minotaur", "lizardfolk", "troll", "human"]);
+    expect(claude.calls).toHaveLength(2);
+    const folk = ((await svc.call("nemesis.folk", { world: "testland" })) as any).cultures.Yotunn;
+    expect(folk.map((s: any) => s.name)).toEqual(["minotaur", "lizardfolk", "troll", "human"]);
+    expect(folk[0].forms).toEqual([{ sex: "female", called: "minotaur cow" }, { sex: "male", called: "minotaur" }]);
     await expect(new NemesisService((await world({ folk: false })).data).call("nemesis.cast", { world: "testland", town: 119, place: "p", people: SHOP })).rejects.toThrow(/cannot reach Claude/);
   });
 
@@ -446,5 +468,104 @@ describe("companion: cast and keepers", () => {
     await portraits.claim(job.id, "brok-the-baker");
     expect(job.files).toEqual({ final: "art/brok-the-baker/final.png" });
     expect([existsSync(join(data, "w", "art", "brok-the-baker", "final.png")), existsSync(join(data, "w", "art", "pending-x"))]).toEqual([true, false]);
+  });
+});
+
+describe("biology: sexes, forms and bodies", () => {
+  const BIO_YOTUNN = (): FolkCulture => ({
+    ...YOTUNN,
+    species: YOTUNN.species.map((s) => {
+      const b = bioOf(YOTUNN).species.find((x) => x.name === s.name)!;
+      return { ...s, biology: { forms: b.forms as any, origin: b.origin, lifespan: b.lifespan, limits: b.limits } };
+    }),
+  });
+
+  it("brings back the same townsperson after the folk book gains biology; their name decides their form and look", () => {
+    const bio = BIO_YOTUNN();
+    for (let i = 0; i < 300; i++) {
+      const before = pickFolk(YOTUNN, `seed-${i}`);
+      const after = pickFolk(bio, `seed-${i}`);
+      expect([after.name, after.species, after.manner, after.token]).toEqual([before.name, before.species, before.manner, before.token]);
+      const sp = bio.species.find((s) => s.name === after.species)!;
+      const form = sp.biology!.forms.find((f) => f.given.includes(after.name.split(" ")[0]!))!;
+      expect([after.sex, form.looks.includes(after.look)]).toEqual([form.sex, true]);
+    }
+  });
+
+  it("keeps the myths, and every name in exactly one form", () => {
+    const harpies: FolkCulture = { manners: [], species: [species("harpy", 50, "monstrosity/Harpy"), species("minotaur", 50, "monstrosity/Minotaur")] };
+    const good = bioOf(harpies);
+    expect(good.species[0]!.forms.map((f) => f.sex)).toEqual(["female"]);
+    expect(biologyProblems(harpies, good as any)).toEqual([]);
+    const bad = structuredClone(good) as any;
+    const h = bad.species[0].forms[0];
+    bad.species[0].forms = [{ ...h, given: h.given.slice(0, 10) }, { ...h, sex: "male", given: h.given.slice(10, 20) }];
+    bad.species[1].forms[1].given.push(bad.species[1].forms[0].given[0], "Zzyzx");
+    const errs = biologyProblems(harpies, bad);
+    expect(errs).toContain("harpy: the myths make them female only: one female form");
+    expect(errs.some((e) => e.startsWith("harpy: sort these names into a form too: "))).toBe(true);
+    expect(errs.some((e) => e.startsWith("minotaur: these names are in both forms"))).toBe(true);
+    expect(errs).toContain("minotaur: use only the names given; not in the list: Zzyzx");
+    expect([mythSex("Harpies"), mythSex("satyr"), mythSex("minotaur")]).toEqual(["female", "male", undefined]);
+  });
+
+  it("writes a culture's biology with Claude, checked, and adds it to the folk", async () => {
+    const claude = new FakeClaude([{ species: [] }, bioOf(YOTUNN)]);
+    const out = await writeBiology({ claude, culture: "Yotunn", folk: YOTUNN });
+    expect(claude.calls).toHaveLength(2);
+    expect(claude.calls[1]!.prompt).toContain("Your last answer broke these rules");
+    expect(out.species[0]!.biology!.forms[0]).toMatchObject({ sex: "female", called: "minotaur cow" });
+    expect(out.species.map((s) => s.given)).toEqual(YOTUNN.species.map((s) => s.given));
+  });
+
+  it("tells the sketch and the card the form, and holds the card to it", () => {
+    const bio = BIO_YOTUNN();
+    const cow = bio.species[0]!.biology!.forms[0]!.given[0]!;
+    const body = bodyOf(bio, "minotaur", { name: `${cow} Holvane` });
+    expect(body).toMatchObject({ species: "minotaur", sex: "female", called: "minotaur cow", anatomy: "female minotaur body", limits: "minotaur limits" });
+    expect(bodyLine(body)).toBe("a female minotaur, a minotaur cow to their folk: female minotaur body");
+    expect(sketchPrompt({ name: `${cow} Holvane`, species: "minotaur", role: "alchemist", body })).toContain(`${cow} Holvane, a female minotaur, a minotaur cow to their folk: female minotaur body.`);
+    expect(bodyOf(bio, "minotaur", { sex: "male" })).toMatchObject({ sex: "male", anatomy: "male minotaur body" });
+    expect(bodyProblems({ species: "minotaur", sex: "female" }, bio)).toEqual([]);
+    expect(bodyProblems({ species: "minotaur", sex: "none" }, bio)).toEqual(["sex: a minotaur is female or male, not none"]);
+    expect(bodyProblems({ species: "harpy", sex: "male" }, bio)).toEqual(["sex: the myths make every harpy female"]);
+    expect(bodyProblems({ species: "dragon", sex: "male" }, bio)).toEqual([]);
+    expect(folkBodies(bio)).toContain("- minotaur (40%): female, called a minotaur cow: female minotaur body / male: male minotaur body. minotaur limits");
+  });
+
+  it("writes a keeper in the body of their form, with their sex and the culture's word on record", async () => {
+    const { data, s, dir } = await world();
+    const bio = BIO_YOTUNN();
+    await writeFile(join(dir, "folk.json"), JSON.stringify({ cultures: { Yotunn: bio } }));
+    const cow = bio.species[0]!.biology!.forms[0]!.given[0]!;
+    // Claude says male; the table saw a cow's name, so she is a cow.
+    const claude = new FakeClaude([villagerCard({ species: "minotaur", sex: "male" })]);
+    const svc = new NemesisService(data, { claude });
+    const k = (await svc.call("nemesis.keeper", { world: "testland", town: 119, place: "city1:alchemist", role: "alchemist", n: 0, scene: "Alchemist", name: `${cow} Holvane`, species: "minotaur" })) as any;
+    expect(claude.calls[0]!.prompt).toContain("- Species and body: a female minotaur, a minotaur cow to their folk: female minotaur body");
+    expect(claude.calls[0]!.prompt).toContain("- What their body rules out or needs: minotaur limits");
+    expect([k.person.sex, k.person.form]).toEqual(["female", "minotaur cow"]);
+    // Generate (no pin): the culture's forms are in the prompt, and a sex the species lacks is sent back.
+    const gen = new FakeClaude([villagerCard({ name: "Brakka", species: "minotaur", sex: "none" }), villagerCard({ name: "Brakka", species: "minotaur", sex: "male" })]);
+    const g = await generatePerson({ store: s, claude: gen, folk: bio, req: { faction: "march", rank: "villager" } });
+    expect(gen.calls[0]!.prompt).toContain("## The folk of this culture: their forms and bodies");
+    expect(gen.calls[1]!.prompt).toContain("sex: a minotaur is female or male, not none");
+    expect([g.person.sex, g.person.form]).toEqual(["male", undefined]);
+  });
+
+  it("rewrites only the body lines of someone written in the wrong body", async () => {
+    const rec: any = {
+      id: "sronda", name: "Sronda", role: "potion maker", species: "minotaur", look: "Eight feet of brindle hide and curved horns.", personality: "Patient.",
+      static: { ac: 15, attacks: [{ name: "Horns", text: "Gores like a bull clearing a gate." }] }, memory: [{ when: "s1", text: "Met the party" }],
+      notes: { roleplay: { voice: "Low.", mannerisms: "Taps a hoof." } }, art: { prompt: "A bull-headed woman.", base: "A bull-headed woman.", notes: ["older"] },
+    };
+    expect(bodyTexts(rec).map((t) => t.path)).toEqual(["look", "personality", "static.attacks.0.name", "static.attacks.0.text", "notes.roleplay.voice", "notes.roleplay.mannerisms", "art.base"]);
+    const claude = new FakeClaude([{ changes: [{ path: "look", text: "A slight cow of her kind, five feet tall." }, { path: "static.attacks.0.text", text: "Butts with her short horns." }, { path: "art.base", text: "A small cow-headed woman." }, { path: "name", text: "Hacked" }, { path: "memory.0.text", text: "Hacked" }] }]);
+    const { person, changed } = await reshapePerson({ claude, rec, body: { species: "minotaur", sex: "female", called: "minotaur cow", anatomy: "cow-headed" }, note: "thin and small" });
+    expect(claude.calls[0]!.prompt).toContain("Their true body: a female minotaur, a minotaur cow to their folk: cow-headed.");
+    expect(claude.calls[0]!.prompt).toContain("The Game Master adds: thin and small");
+    expect(changed).toEqual(["look", "static.attacks.0.text", "art.base"]);
+    expect([person.name, person.memory[0].text, person.static.attacks[0].name, person.notes.roleplay.voice]).toEqual(["Sronda", "Met the party", "Horns", "Low."]);
+    expect([person.look, person.static.attacks[0].text, person.art.base, person.art.prompt, person.art.notes, person.sex, person.form]).toEqual(["A slight cow of her kind, five feet tall.", "Butts with her short horns.", "A small cow-headed woman.", "A small cow-headed woman.", ["older"], "female", "minotaur cow"]);
   });
 });

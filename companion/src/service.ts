@@ -10,7 +10,8 @@ import { actorData } from "./actor";
 import { buildBoard } from "./board";
 import { castScene, personAt, postKey, protectedNames, rankOfKind, roleKey, type Post } from "./cast";
 import type { ClaudeRunner } from "./claude";
-import { cultureOf, folkActorData, loadFolkBook, saveFolkBook, writeCulture, type FolkBook } from "./folk";
+import { bodyOf, cultureOf, folkActorData, loadFolkBook, saveFolkBook, SEXES, writeBiology, writeCulture, type FolkBook, type FolkCulture } from "./folk";
+import { reshapePerson } from "./reshape";
 import { generatePerson, loadSeedTables, writeUpPerson, type Rank } from "./generate";
 import { writeSketch, type Sketch } from "./sketch";
 import type { PortraitQueue } from "./portraits";
@@ -63,6 +64,29 @@ export class NemesisService {
    * The world's folk book with these cultures in it; Claude writes the missing ones (once, then
    * kept in folk.json). Without Claude, a missing culture is an error.
    */
+  /**
+   * Adds the biology (sexes, forms, lifespans, limits) to cultures of a folk book written before it
+   * had any, or writes it again (rebuild). One Claude call per culture, in parallel. Returns the book.
+   */
+  async addBiology(world: string, cultures: string[], o: { rebuild?: boolean } = {}): Promise<FolkBook> {
+    const claude = this.deps.claude;
+    if (!claude) throw new Error("this companion cannot reach Claude, so it cannot write the folk's biology");
+    const dir = this.worldDir(world);
+    const book = await loadFolkBook(dir);
+    if (!book) throw new Error(`no folk book for ${world} yet`);
+    const todo = cultures.filter((c) => book.cultures[c] && (o.rebuild || book.cultures[c]!.species.some((s) => !s.biology)));
+    const written = await Promise.all(todo.map(async (c) => [c, await writeBiology({ claude, culture: c, folk: book.cultures[c]!, model: this.deps.model })] as const));
+    const fresh = (await loadFolkBook(dir))!;
+    for (const [c, f] of written) fresh.cultures[c] = f;
+    await saveFolkBook(dir, fresh);
+    return fresh;
+  }
+
+  /** A culture's folk from the folk book on disk (no Claude), when there is one. */
+  async folkOf(world: string, culture: string | undefined): Promise<FolkCulture | undefined> {
+    return culture ? (await loadFolkBook(this.worldDir(world)))?.cultures[culture] : undefined;
+  }
+
   async folkBook(world: string, cultures: string[]): Promise<FolkBook> {
     const dir = this.worldDir(world);
     const pending = this.folkWrites.get(world);
@@ -79,7 +103,9 @@ export class NemesisService {
       const written = await Promise.all(missing.map(async (culture) => {
         const states = new Set(store.list("factions").filter((f) => cultureOf(f, lore) === culture).map((f) => f.state));
         const townNames = (atlas?.towns ?? []).filter((t) => states.has(t.state)).map((t) => t.name);
-        return [culture, await writeCulture({ claude, culture, lore, townNames, model: this.deps.model })] as const;
+        const folk = await writeCulture({ claude, culture, lore, townNames, model: this.deps.model });
+        // Then their bodies: sexes, the culture's word for each form, lifespans and limits.
+        return [culture, await writeBiology({ claude, culture, folk, model: this.deps.model })] as const;
       }));
       const fresh = (await loadFolkBook(dir)) ?? { cultures: {} };
       for (const [c, f] of written) fresh.cultures[c] = f;
@@ -186,7 +212,7 @@ export class NemesisService {
         const cultures = [...new Set(store.list("factions").map((f) => cultureOf(f, lore)).filter((c): c is string => !!c))];
         const book = p.build ? await this.folkBook(p.world, cultures) : (await loadFolkBook(this.worldDir(p.world))) ?? { cultures: {} };
         return {
-          cultures: Object.fromEntries(Object.entries(book.cultures).map(([c, f]) => [c, f.species.map((s) => ({ name: s.name, weight: s.weight, token: s.token }))])),
+          cultures: Object.fromEntries(Object.entries(book.cultures).map(([c, f]) => [c, f.species.map((s) => ({ name: s.name, weight: s.weight, token: s.token, ...(s.biology ? { forms: s.biology.forms.map((x) => ({ sex: x.sex, called: x.called })) } : {}) }))])),
           missing: cultures.filter((c) => !book.cultures[c]),
           made: book.made,
         };
@@ -236,7 +262,10 @@ export class NemesisService {
           const claude = this.deps.claude;
           job = (async () => {
             const store = await this.store(p.world);
-            const g = await writeUpPerson({ store, claude, atlas: await this.atlas(p.world), lore: await this.lore(p.world), id, note: p.note ? String(p.note).slice(0, 2000) : undefined, model: this.deps.model });
+            const lore = await this.lore(p.world);
+            const rec = store.get("persons", id);
+            const folk = await this.folkOf(p.world, cultureOf(rec?.faction ? store.get("factions", rec.faction) : undefined, lore));
+            const g = await writeUpPerson({ store, claude, atlas: await this.atlas(p.world), lore, id, note: p.note ? String(p.note).slice(0, 2000) : undefined, model: this.deps.model, folk });
             return { person: g.person, actor: this.actorFor(p.world, g.person) };
           })();
           this.keepers.set(key, job);
@@ -263,11 +292,14 @@ export class NemesisService {
             const culture = cultureOf(faction, lore);
             const book = await loadFolkBook(this.worldDir(p.world));
             const species = String(p.species ?? "").slice(0, 120);
+            const name = String(p.name ?? "").slice(0, 120);
+            const folk = culture ? book?.cultures[culture] : undefined;
             return writeSketch({
               claude, model: this.deps.sketchModel ?? "opus",
               input: {
-                name: String(p.name ?? "").slice(0, 120), species, role: post.role, scene: post.scene, town: town.name, faction: faction?.name,
-                anatomy: culture ? book?.cultures[culture]?.species.find((s) => s.name === species)?.anatomy : undefined,
+                name, species, role: post.role, scene: post.scene, town: town.name, faction: faction?.name,
+                anatomy: folk?.species.find((s) => s.name === species)?.anatomy,
+                ...(folk?.species.find((s) => s.name === species)?.biology ? { body: bodyOf(folk, species, { name }) } : {}),
                 culture, way: culture ? lore?.cultures?.[culture]?.way : undefined,
               },
             });
@@ -297,13 +329,19 @@ export class NemesisService {
           job = (async () => {
             const sketch = given ?? (await this.sketches.get(key)?.catch(() => undefined));
             const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 2000) : undefined);
+            const lore = await this.lore(p.world);
+            const folk = await this.folkOf(p.world, cultureOf(faction, lore));
+            const species = p.species ? String(p.species).slice(0, 120) : undefined;
+            const name = p.name ? String(p.name).slice(0, 120) : undefined;
+            const hasBody = !!species && !!folk?.species.find((s) => s.name === species)?.biology;
             const g = await generatePerson({
-              store, claude, atlas: await this.atlas(p.world), lore: await this.lore(p.world), tables: {},
+              store, claude, atlas: await this.atlas(p.world), lore, tables: {}, folk,
               req: {
                 faction: faction.id, rank, home: town.id, superior: null, post,
                 pin: {
-                  name: p.name ? String(p.name).slice(0, 120) : undefined, species: p.species ? String(p.species).slice(0, 120) : undefined, role: post.role,
+                  name, species, role: post.role,
                   look: text(sketch?.look), voice: text(sketch?.voice), mannerisms: text(sketch?.mannerisms),
+                  ...(hasBody ? { body: bodyOf(folk, species!, { name }) } : {}),
                 },
                 note: p.note ? String(p.note).slice(0, 2000) : undefined,
               },
@@ -324,6 +362,23 @@ export class NemesisService {
           job.finally(() => this.keepers.delete(key)).catch(() => undefined);
         }
         return { ...(await job), existing: false };
+      }
+      case "nemesis.reshape": {
+        // Someone written in a body their species does not have: their body lines rewritten to their form.
+        if (!this.deps.claude) throw new Error("this companion cannot reach Claude, so it cannot rewrite people");
+        const store = await this.store(p.world);
+        const rec = store.get("persons", String(p.id));
+        if (!rec) throw new Error(`no person "${p.id}"`);
+        if (rec.flags?.plotLocked) throw new Error(`${rec.name} is plot-locked: the GM writes them, not Claude`);
+        const folk = await this.folkOf(p.world, cultureOf(rec.faction ? store.get("factions", rec.faction) : undefined, await this.lore(p.world)));
+        const species = String(rec.species ?? "").trim().toLowerCase();
+        if (!folk?.species.find((s) => s.name === species)?.biology) throw new Error(`the folk book has no biology for "${rec.species}" yet`);
+        const sex = SEXES.includes(p.sex) ? p.sex : rec.sex;
+        const body = bodyOf(folk, species, { sex, name: rec.name });
+        if (!body.sex) throw new Error(`say which form ${rec.name} is: ${folk.species.find((s) => s.name === species)!.biology!.forms.map((f) => f.sex).join(" or ")}`);
+        const { person, changed } = await reshapePerson({ claude: this.deps.claude, rec, body, note: p.note ? String(p.note).slice(0, 1000) : undefined, model: this.deps.model });
+        await store.put("persons", person);
+        return { person, actor: person.static?.ac ? this.actorFor(p.world, person) : undefined, changed };
       }
       case "nemesis.warmArt":
         // The GM opened a scene with someone to paint: the art server starts now, not after the card.
@@ -350,9 +405,11 @@ export class NemesisService {
             const culture = cultureOf(faction, lore);
             const book = await loadFolkBook(this.worldDir(p.world));
             const species = String(p.species ?? "").slice(0, 120);
+            const folk = culture ? book?.cultures[culture] : undefined;
+            const sp = folk?.species.find((s) => s.name === species);
             const description = await writeKeeperArt({
               claude, model: this.deps.model,
-              input: { species, role: post.role, scene: post.scene, town: town.name, sketch, anatomy: culture ? book?.cultures[culture]?.species.find((s) => s.name === species)?.anatomy : undefined },
+              input: { species, role: post.role, scene: post.scene, town: town.name, sketch, anatomy: sp?.anatomy, ...(sp?.biology ? { body: bodyOf(folk, species, { name: String(p.name ?? "") }) } : {}) },
             });
             // A stand-in folder until the card is written and claims it.
             return { job: q.add(p.world, `pending-${slug(postKey(post))}`, description).id, description };
@@ -368,8 +425,10 @@ export class NemesisService {
         const rank = String(p.rank) as Rank;
         if (!RANKS.includes(rank as (typeof RANKS)[number]) || rank === ("unranked" as Rank)) throw new Error(`rank must be one of ${RANKS.filter((r) => r !== "unranked").join(", ")}`);
         const store = await this.store(p.world);
+        const lore = await this.lore(p.world);
+        const folk = await this.folkOf(p.world, cultureOf(store.get("factions", String(p.faction)), lore));
         const g = await generatePerson({
-          store, claude: this.deps.claude, atlas: await this.atlas(p.world), lore: await this.lore(p.world), tables: await loadSeedTables(this.dataDir),
+          store, claude: this.deps.claude, atlas: await this.atlas(p.world), lore, tables: await loadSeedTables(this.dataDir), folk,
           req: { faction: String(p.faction), rank, home: p.home === undefined ? undefined : Number(p.home), superior: p.superior ? String(p.superior) : undefined, note: p.note ? String(p.note).slice(0, 2000) : undefined, seed: p.seed === undefined ? undefined : Number(p.seed) },
           model: this.deps.model,
         });
@@ -398,7 +457,10 @@ export class NemesisService {
           if (notes.length) {
             const claude = this.deps.claude;
             if (!claude) throw new Error("this companion cannot reach Claude, so it cannot read the corrections");
-            prompt = await revisePortrait({ claude, model: this.deps.sketchModel ?? "opus", input: { base, species: person.species, look: person.look, notes } });
+            const folk = await this.folkOf(p.world, cultureOf(person.faction ? store.get("factions", person.faction) : undefined, await this.lore(p.world)));
+            const sp = folk?.species.find((s) => s.name === String(person!.species ?? "").trim().toLowerCase());
+            const body = sp?.biology ? bodyOf(folk, sp.name, { sex: person.sex, name: person.name }) : undefined;
+            prompt = await revisePortrait({ claude, model: this.deps.sketchModel ?? "opus", input: { base, species: person.species, look: person.look, notes, ...(body ? { body } : {}) } });
           }
           person = { ...person, art: { ...art, base, notes, prompt } };
           await store.put("persons", person);

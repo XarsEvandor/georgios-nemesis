@@ -6,6 +6,7 @@
 
 import { placeName, roleAt } from "./cast";
 import type { ClaudeRunner } from "./claude";
+import { bodyFacts, bodyLine, type Body } from "./folk";
 
 export interface Sketch {
   look: string;
@@ -28,13 +29,15 @@ export const SKETCH_SCHEMA = {
   },
 } as const;
 
-export const SKETCH_SYSTEM = `You sketch a person a Game Master is about to introduce at the table. The world is Ogeia, a dark gothic fantasy land inside Dracula's castle; its people call Dracula "the Lord". Nearly everyone there is not human, and any mythical creature may live there. Be concrete and brief: the GM reads this aloud within seconds. Invent nothing about the wider world (no new realms, wars, gods or history). Answer only with the structured output.`;
+export const SKETCH_SYSTEM = `You sketch a person a Game Master is about to introduce at the table. The world is Ogeia, a dark gothic fantasy land inside Dracula's castle; its people call Dracula "the Lord". Nearly everyone there is not human, and any mythical creature may live there. Keep their sex and body exactly as given (a female minotaur is a cow of her kind, not a bull-headed woman), and let what their body rules out or needs shape how they work and move. Be concrete and brief: the GM reads this aloud within seconds. Invent nothing about the wider world (no new realms, wars, gods or history). Answer only with the structured output.`;
 
 export interface SketchInput {
   name: string;
   species: string;
   /** The species' body, from the folk book. */
   anatomy?: string;
+  /** Their form (sex, the culture's word, that form's body and limits), once the folk book has biology. */
+  body?: Body;
   role: string;
   scene?: string;
   town?: string;
@@ -45,7 +48,8 @@ export interface SketchInput {
 
 export function sketchPrompt(i: SketchInput): string {
   return [
-    `${i.name}, a ${i.species}${i.anatomy ? ` (${i.anatomy})` : ""}.`,
+    i.body ? `${i.name}, ${bodyLine(i.body)}.` : `${i.name}, a ${i.species}${i.anatomy ? ` (${i.anatomy})` : ""}.`,
+    ...(i.body ? bodyFacts(i.body) : []),
     `They are ${roleAt(i.role, placeName(i.scene, i.town))}${i.town ? ` in ${i.town}` : ""}${i.faction ? `, in the ${i.faction}` : ""}.`,
     i.culture ? `Their people live the ${i.culture} way${i.way ? ` (${i.way})` : ""}.` : "",
   ].filter(Boolean).join("\n");

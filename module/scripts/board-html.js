@@ -237,7 +237,7 @@ export function journalHtml(person, t) {
   // No name heading: Foundry shows the page's title (the person's name) above it.
   return [
     artHtml(person, t),
-    `<p><em>${esc([person.species, person.rank ? t(`Rank.${person.rank}`) : "", person.role].filter(Boolean).join(", "))}</em></p>`,
+    `<p><em>${esc([person.form ? `${person.species} (${person.form})` : person.species, person.rank ? t(`Rank.${person.rank}`) : "", person.role].filter(Boolean).join(", "))}</em></p>`,
     row(t("Look"), person.look),
     row(t("Personality"), person.personality),
     person.wants?.length ? `<h2>${esc(t("Wants"))}</h2>${li(person.wants)}` : "",

@@ -17,6 +17,32 @@ import { slug } from "./import";
 import { FOLK_TOKENS, tokenPath } from "./tokens";
 import type { WorldLore } from "./world";
 
+export type Sex = "female" | "male" | "none";
+export const SEXES: readonly Sex[] = ["female", "male", "none"];
+
+/** One form of a species: a sex, what the culture calls it, its body, its names and looks. */
+export interface FolkForm {
+  sex: Sex;
+  /** What the culture calls this form ("minotaur" for the bulls; the cows have their own word). */
+  called: string;
+  /** One line of this form's body for an image model. */
+  anatomy: string;
+  /** The species' given names that belong to this form (every name belongs to one form). */
+  given: string[];
+  looks: string[];
+}
+
+/** How a species lives in its body, within the confines of fantasy. */
+export interface SpeciesBiology {
+  forms: FolkForm[];
+  /** How they come to be: born, hatched from clutches, turned, grown, made. */
+  origin: string;
+  /** When they are young, grown and old, in years. */
+  lifespan: string;
+  /** What their body rules out or needs (water, stairs, daylight, hands). */
+  limits: string;
+}
+
 export interface FolkSpecies {
   name: string;
   /** Share of the culture's townsfolk, in percent. */
@@ -27,6 +53,65 @@ export interface FolkSpecies {
   given: string[];
   family: string[];
   looks: string[];
+  /** Sexes, bodies and limits (folk books written before 2026-11-20 get it added). */
+  biology?: SpeciesBiology;
+}
+
+/** Kinds the myths make one sex only (the GM: "keep the myths"). */
+export const ONE_SEX: Record<string, Sex> = {
+  harpy: "female", dryad: "female", hag: "female", siren: "female", nymph: "female", naiad: "female", nereid: "female",
+  lamia: "female", gorgon: "female", medusa: "female", banshee: "female", succubus: "female", valkyrie: "female",
+  satyr: "male", faun: "male", incubus: "male",
+};
+
+/** The one sex the myths give a kind, if any ("harpies" and "harpy" alike). */
+export function mythSex(species: string): Sex | undefined {
+  const s = species.trim().toLowerCase();
+  return ONE_SEX[s] ?? ONE_SEX[s.replace(/ies$/, "y").replace(/s$/, "")];
+}
+
+/** The form a person of this species is, by sex when known, else by their given name. */
+export function formOf(sp: FolkSpecies | undefined, o: { name?: string; sex?: string }): FolkForm | undefined {
+  const forms = sp?.biology?.forms ?? [];
+  if (!forms.length) return undefined;
+  if (o.sex) return forms.find((f) => f.sex === o.sex);
+  const name = (o.name ?? "").trim();
+  return forms.find((f) => f.given.some((g) => name === g || name.startsWith(`${g} `))) ?? (forms.length === 1 ? forms[0] : undefined);
+}
+
+/** A person's body for a prompt: their species, sex, the culture's word for their form, and that form's body. */
+export interface Body {
+  species: string;
+  sex?: Sex;
+  called?: string;
+  anatomy?: string;
+  origin?: string;
+  lifespan?: string;
+  limits?: string;
+}
+
+export function bodyOf(c: FolkCulture | undefined, species: string, o: { name?: string; sex?: string } = {}): Body {
+  const sp = c?.species.find((s) => s.name === species.trim().toLowerCase());
+  const form = formOf(sp, o);
+  const sex = form?.sex ?? (SEXES.includes(o.sex as Sex) ? (o.sex as Sex) : undefined);
+  return {
+    species,
+    ...(sex ? { sex } : {}),
+    ...(form && form.called.toLowerCase() !== species.toLowerCase() ? { called: form.called } : {}),
+    ...(form?.anatomy || sp?.anatomy ? { anatomy: form?.anatomy ?? sp?.anatomy } : {}),
+    ...(sp?.biology ? { origin: sp.biology.origin, lifespan: sp.biology.lifespan, limits: sp.biology.limits } : {}),
+  };
+}
+
+/** "a female minotaur, a kine to their folk: cow-headed, ..." for a prompt. */
+export function bodyLine(b: Body): string {
+  const kind = [b.sex && b.sex !== "none" ? b.sex : "", b.species].filter(Boolean).join(" ");
+  return `a ${kind}${b.called ? `, a ${b.called} to their folk` : ""}${b.anatomy ? `: ${b.anatomy}` : ""}`;
+}
+
+/** The rest of the body's facts, one line each, for a prompt. */
+export function bodyFacts(b: Body): string[] {
+  return [b.origin ? `How their kind comes to be: ${b.origin}` : "", b.lifespan ? `Age: ${b.lifespan}` : "", b.limits ? `What their body rules out or needs: ${b.limits}` : ""].filter(Boolean);
 }
 
 export interface FolkCulture {
@@ -155,6 +240,139 @@ function tidy(c: FolkCulture): FolkCulture {
   };
 }
 
+export const BIOLOGY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["species"],
+  properties: {
+    species: {
+      type: "array",
+      description: "Every species of the culture, in the order given",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "forms", "origin", "lifespan", "limits"],
+        properties: {
+          name: str("The species' name exactly as given"),
+          forms: {
+            type: "array",
+            description: "Its sexes: two forms (female and male), one form for a kind the myths make one sex, or one form \"none\" for something made, grown or built",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["sex", "called", "anatomy", "given", "looks"],
+              properties: {
+                sex: { type: "string", enum: ["female", "male", "none"] },
+                called: str("What the culture calls this form, one or two words, lowercase singular: the species' own name when the culture uses it for this form too"),
+                anatomy: str("One line of this form's body for an image model: head, horns, build, height, hide, tail, eyes; how it differs from the other form"),
+                given: strs("The species' given names (from the list given) that belong to this form; every name in exactly one form"),
+                looks: strs("5 one-line looks for an ordinary townsperson of this form (age, wear, one detail), no names"),
+              },
+            },
+          },
+          origin: str("How they come to be, one line: born to two parents, hatched from clutches, turned by a bite or a curse (keeping the sex they had), grown, built"),
+          lifespan: str("One line: when they are grown, when old, how long they rarely outlive, in years"),
+          limits: str("One line: what their body rules out or needs in daily life and work (water, stairs, daylight, hands, size, food)"),
+        },
+      },
+    },
+  },
+} as const;
+
+const BIOLOGY_SYSTEM = `You write the biology of the townsfolk of one culture in a Game Master's D&D campaign world: Ogeia, a dark gothic fantasy land inside Dracula's castle. The GM wants every person's body to make sense within the confines of fantasy: a female minotaur is not a bull-headed woman, she is a cow of her kind, with her own word.
+
+Rules you never break:
+- Keep the myths. Harpies, dryads, hags, sirens, nymphs, lamias and gorgons are female only. Satyrs and fauns are male only. Such a kind has one form, and every one of its names belongs to it.
+- Two-sexed kinds have a female and a male form. Give each form its body: how the cows differ from the bulls, the mermaids from the mermen, in head, horns, build, height and hide. Name each form as this culture would: the species' own word where the culture uses it for that form ("minotaur" for the bulls), a word of the culture's own for the other ("minocow" is the GM's joke; find the culture's word). Words fit the culture's style, never modern.
+- Something made, grown in vats or built (machines, constructs, grafted beasts) has one form, sex "none", unless it was a person before it was made (the fused were soldiers): then it keeps the two sexes.
+- The undead and the cursed (vampires, ghouls, werefolk) keep the sex they had; they come to be by a bite or a curse, not by birth.
+- Sort every given name of the species into exactly one form, by how it sounds in this culture. A two-form kind needs at least 3 names in each form; move the names that could go either way.
+- Lifespans and limits are concrete and plain: when they are grown and old in years; what the body rules out or needs (merfolk need water, harpies have wings for arms and work with their feet, centaurs cannot climb stairs or ladders, dryads stay near their tree, vampires shun daylight).
+- Invent nothing about the wider world (no realms, wars, gods or history).
+
+Answer only with the structured output.`;
+
+function biologyPrompt(culture: string, c: FolkCulture): string {
+  return [
+    culture === INVADER ? "The culture: the invader's townsfolk (its machines, its fused soldiers and made creatures, and the conquered folk who serve them)." : `The culture: ${culture}.`,
+    ...c.species.map((s) => [
+      `\n## ${s.name}`,
+      `Body: ${s.anatomy}`,
+      `Given names: ${s.given.join(", ")}`,
+      `Looks so far: ${s.looks.join(" | ")}`,
+    ].join("\n")),
+  ].join("\n");
+}
+
+interface BiologyAnswer {
+  species: Array<{ name: string; forms: FolkForm[]; origin: string; lifespan: string; limits: string }>;
+}
+
+/** What is wrong with Claude's biology for a culture (empty when it is fine). */
+export function biologyProblems(c: FolkCulture, a: BiologyAnswer): string[] {
+  const out: string[] = [];
+  for (const sp of c.species) {
+    const b = a.species?.find((x) => x.name?.trim().toLowerCase() === sp.name);
+    if (!b) {
+      out.push(`${sp.name}: missing`);
+      continue;
+    }
+    const forms = b.forms ?? [];
+    const sexes = forms.map((f) => f.sex);
+    if (!forms.length || forms.length > 2) out.push(`${sp.name}: give one or two forms (got ${forms.length})`);
+    if (new Set(sexes).size !== sexes.length) out.push(`${sp.name}: each sex once`);
+    if (sexes.includes("none") && forms.length > 1) out.push(`${sp.name}: a made kind with no sex has only that one form`);
+    const myth = mythSex(sp.name);
+    if (myth && (forms.length !== 1 || sexes[0] !== myth)) out.push(`${sp.name}: the myths make them ${myth} only: one ${myth} form`);
+    const all = new Map<string, number>();
+    for (const f of forms) {
+      if (!SEXES.includes(f.sex)) out.push(`${sp.name}: sex "${f.sex}" is not female, male or none`);
+      if (!f.called?.trim()) out.push(`${sp.name} ${f.sex}: say what the culture calls this form`);
+      if (!f.anatomy?.trim()) out.push(`${sp.name} ${f.sex}: anatomy is empty`);
+      if ((f.looks ?? []).filter((x) => x?.trim()).length < 4) out.push(`${sp.name} ${f.sex}: give at least 4 looks`);
+      for (const g of f.given ?? []) all.set(g.trim(), (all.get(g.trim()) ?? 0) + 1);
+      if (forms.length === 2 && (f.given ?? []).length < 3) out.push(`${sp.name} ${f.sex}: give this form at least 3 of the names`);
+    }
+    const missing = sp.given.filter((g) => !all.has(g));
+    if (missing.length) out.push(`${sp.name}: sort these names into a form too: ${missing.join(", ")}`);
+    const twice = [...all].filter(([, n]) => n > 1).map(([g]) => g);
+    if (twice.length) out.push(`${sp.name}: these names are in both forms, put each in one: ${twice.join(", ")}`);
+    const foreign = [...all.keys()].filter((g) => !sp.given.includes(g));
+    if (foreign.length) out.push(`${sp.name}: use only the names given; not in the list: ${foreign.join(", ")}`);
+    for (const k of ["origin", "lifespan", "limits"] as const) if (!b[k]?.trim()) out.push(`${sp.name}: ${k} is empty`);
+  }
+  return out;
+}
+
+/** Claude writes the biology of one culture's species; returns the culture with it. Checked, `tries` attempts. */
+export async function writeBiology(o: { claude: ClaudeRunner; culture: string; folk: FolkCulture; model?: string; tries?: number }): Promise<FolkCulture> {
+  let prompt = biologyPrompt(o.culture, o.folk);
+  let last: string[] = [];
+  for (let n = 1; n <= (o.tries ?? 3); n++) {
+    const a = (await o.claude.structured({ prompt, system: BIOLOGY_SYSTEM, schema: BIOLOGY_SCHEMA, model: o.model, timeoutMs: 600_000 })) as BiologyAnswer;
+    for (const b of a.species ?? []) for (const f of b.forms ?? []) f.given = (f.given ?? []).map((g) => g.trim());
+    last = biologyProblems(o.folk, a);
+    if (!last.length) {
+      const uniq = (xs: string[]) => [...new Set(xs.map((x) => x.trim()).filter(Boolean))];
+      return {
+        ...o.folk,
+        species: o.folk.species.map((sp) => {
+          const b = a.species.find((x) => x.name.trim().toLowerCase() === sp.name)!;
+          return {
+            ...sp,
+            biology: {
+              forms: b.forms.map((f) => ({ sex: f.sex, called: f.called.trim().toLowerCase(), anatomy: f.anatomy.trim(), given: uniq(f.given), looks: uniq(f.looks) })),
+              origin: b.origin.trim(), lifespan: b.lifespan.trim(), limits: b.limits.trim(),
+            },
+          };
+        }),
+      };
+    }
+    prompt = `${biologyPrompt(o.culture, o.folk)}\n\n## Your last answer broke these rules; write it again and fix them\n${last.map((e) => `- ${e}`).join("\n")}`;
+  }
+  throw new Error(`Claude's biology for ${o.culture} broke the rules ${o.tries ?? 3} times: ${last.join("; ")}`);
+}
+
 export const folkFile = (worldDir: string) => join(worldDir, "folk.json");
 
 export async function loadFolkBook(worldDir: string): Promise<FolkBook | undefined> {
@@ -192,6 +410,9 @@ export interface FolkPick {
   token: string;
   look: string;
   manner: string;
+  /** Their form, once the folk book has biology: sex and the culture's word for it. */
+  sex?: Sex;
+  form?: string;
 }
 
 /** One background townsperson, the same for the same seed. */
@@ -208,9 +429,16 @@ export function pickFolk(c: FolkCulture, seed: string): FolkPick {
       break;
     }
   }
+  // The name decides the form, so the same seed brings back the same person (name, family and
+  // manner as before the folk book had biology); only the look now comes from their form.
   const given = pick(sp.given);
   const family = sp.family.length ? pick(sp.family) : "";
-  return { name: family ? `${given} ${family}` : given, species: sp.name, token: tokenPath(sp.token), look: pick(sp.looks), manner: c.manners.length ? pick(c.manners) : "" };
+  const form = formOf(sp, { name: given });
+  const looks = form?.looks.length ? form.looks : sp.looks;
+  return {
+    name: family ? `${given} ${family}` : given, species: sp.name, token: tokenPath(sp.token), look: pick(looks), manner: c.manners.length ? pick(c.manners) : "",
+    ...(form ? { sex: form.sex, form: form.called } : {}),
+  };
 }
 
 /** HP of a background townsperson: the GM's villager 400, the middle of the band above that. */

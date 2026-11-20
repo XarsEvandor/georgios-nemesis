@@ -121,6 +121,8 @@ const NOTES: Schema = obj({
 
 export const PERSON: Schema = obj({
   id: ID, name: TEXT, aliases: TEXTS, species: TEXT, look: { ...TEXT, description: "what the person looks like" },
+  sex: { enum: ["female", "male", "none"], description: "one of the forms their species has" },
+  form: { ...TEXT, description: "what their culture calls their form, when it is not the species' name (a minotaur cow's own word)" },
   rank: { enum: RANKS }, role: TEXT,
   faction: ID, home: TOWN, superior: ID,
   /** Townsfolk: the place and role they keep on Map Maker's maps, so a rebuilt scene finds them again. */

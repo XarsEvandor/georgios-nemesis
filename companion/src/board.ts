@@ -86,7 +86,7 @@ export function buildBoard(store: NemesisStore, atlas: Atlas | undefined): Board
   const towns = new Map((atlas?.towns ?? []).map((b) => [b.id, b.name]));
   const persons = new Map(store.list("persons").map((p) => [p.id, p]));
   const card = (p: NRecord): PersonCard => ({
-    id: p.id, name: p.name, aliases: p.aliases ?? [], species: p.species, look: p.look, rank: p.rank, role: p.role, state: p.state,
+    id: p.id, name: p.name, aliases: p.aliases ?? [], species: p.form ? `${p.species} (${p.form})` : p.species, look: p.look, rank: p.rank, role: p.role, state: p.state,
     home: p.home !== undefined ? { id: p.home, name: towns.get(p.home) ?? `town ${p.home}` } : undefined,
     superior: p.superior && persons.has(p.superior) ? { id: p.superior, name: persons.get(p.superior)!.name } : undefined,
     hp: p.static?.hp,
