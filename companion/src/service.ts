@@ -8,7 +8,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { actorData } from "./actor";
 import { buildBoard } from "./board";
-import { castScene, knownNames, personAt, postKey, rankOfKind, roleKey, type Post } from "./cast";
+import { castScene, personAt, postKey, protectedNames, rankOfKind, roleKey, type Post } from "./cast";
 import type { ClaudeRunner } from "./claude";
 import { cultureOf, folkActorData, loadFolkBook, saveFolkBook, writeCulture, type FolkBook } from "./folk";
 import { generatePerson, loadSeedTables, writeUpPerson, type Rank } from "./generate";
@@ -202,7 +202,7 @@ export class NemesisService {
         }));
         // Names the table knows: Nemesis' people and, from Foundry, the Scribbler's entries.
         const persons = store.list("persons");
-        const known = knownNames(persons, (Array.isArray(p.known) ? p.known : []).slice(0, 2000).map((s: unknown) => String(s).slice(0, 120)));
+        const known = protectedNames(persons, (Array.isArray(p.known) ? p.known : []).slice(0, 2000).map((s: unknown) => String(s).slice(0, 120)));
         return {
           town, faction: faction?.id, culture,
           people: castScene({ culture, folk: book.cultures[culture]!, town: town.id, place, scene: String(p.scene ?? ""), people, persons, known }),

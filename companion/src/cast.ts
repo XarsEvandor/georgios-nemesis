@@ -154,8 +154,19 @@ function distinct(c: FolkCulture, pick: FolkPick, usedLooks: Set<string>, usedNa
   return out;
 }
 
+/**
+ * The names a placeholder must not be recast under: people the table has met who have no token of
+ * their own yet (a session NPC played from Map Maker's placeholder). Once someone is an actor, a
+ * placeholder elsewhere that shares their name (Map Maker reuses a short list of names in every
+ * town) is only a namesake, and is cast like anyone else.
+ */
+export function protectedNames(persons: NRecord[], extra: string[] = []): Set<string> {
+  const embodied = knownNames(persons.filter((p) => p.links?.actor));
+  return new Set([...knownNames(persons.filter((p) => !p.links?.actor), extra)].filter((n) => !embodied.has(n)));
+}
+
 export function castScene(o: { culture: string; folk: FolkCulture; town: number; place: string; scene: string; people: CastInput[]; persons: NRecord[]; known?: Set<string> }): CastPerson[] {
-  const known = o.known ?? knownNames(o.persons);
+  const known = o.known ?? protectedNames(o.persons);
   const skipOf = (p: CastInput): CastPerson["skip"] => (p.renamed ? "renamed" : p.given && known.has(norm(p.given)) ? "known" : undefined);
   const main = new Set(mainIndexes(o.people, o.scene).filter((i) => !skipOf(o.people[i]!)));
   const seen = new Map<string, number>();

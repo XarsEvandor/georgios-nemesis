@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { kitFor } from "../src/balance";
 import { buildBoard } from "../src/board";
 import { cardProblems, type Card } from "../src/card";
-import { castScene, knownNames, mainIndexes, placeName, rankOfKind, roleAt, roleKey } from "../src/cast";
+import { castScene, knownNames, mainIndexes, placeName, protectedNames, rankOfKind, roleAt, roleKey } from "../src/cast";
 import type { ClaudeRunner, StructuredRequest } from "../src/claude";
 import { folkActorData, folkHp, folkProblems, pickFolk, writeCulture, type FolkCulture } from "../src/folk";
 import { NemesisService } from "../src/service";
@@ -175,6 +175,18 @@ describe("scene cast", () => {
     expect([...known].sort()).toEqual(["alice", "alys", "drogo", "galauche greymane", "king", "king dimitrios vi", "the dockworker"]);
     const cast = castScene({ culture: "Yotunn", folk: YOTUNN, town: 119, place: "tavern", scene: "Tavern", people, persons, known });
     expect(cast.map((p) => [p.skip, p.main])).toEqual([["known", false], ["renamed", false], [undefined, false]]);
+  });
+
+  it("protects a met person's name only until they have a token of their own; after that, placeholders with it are namesakes", () => {
+    const people = [{ kind: "commoner", role: "patron", seed: "Drogo, patron", given: "Drogo" }, { kind: "commoner", role: "dockworker", seed: "Alys, dockworker", given: "Alys" }];
+    const persons = [
+      { id: "drogo", name: "Drogo", state: "alive", links: { actor: "Actor.abc" } },
+      { id: "alice", name: "Alice", aliases: ["Alys"], state: "alive" },
+    ];
+    const known = protectedNames(persons, ["Drogo", "Alys", "the dockworker"]);
+    expect(known.has("drogo")).toBe(false);
+    expect(known.has("alys")).toBe(true);
+    expect(castScene({ culture: "Yotunn", folk: YOTUNN, town: 34, place: "tavern", scene: "Tavern", people, persons, known }).map((p) => p.skip)).toEqual([undefined, "known"]);
   });
 
   it("gives no two people in a scene the same look or name while the species has more", () => {
